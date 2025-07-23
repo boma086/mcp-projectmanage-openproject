@@ -1,0 +1,103 @@
+# CodeRabbit configuration file
+# See https://docs.coderabbit.ai/guides/review-instructions
+
+# Language settings
+language: "zh-CN"  # 支持中文评论
+
+# Review settings
+reviews:
+  # 自动审查设置
+  auto_review: true
+  
+  # 审查级别：basic, standard, thorough
+  level: "standard"
+  
+  # 是否审查简单更改（如格式化、重命名等）
+  review_simple_changes: false
+  
+  # 是否在没有问题时发送 LGTM 评论
+  review_comment_lgtm: false
+  
+  # 审查焦点
+  focus:
+    - security          # 安全问题
+    - performance       # 性能问题
+    - maintainability   # 可维护性
+    - best_practices    # 最佳实践
+    - documentation     # 文档
+    - testing          # 测试覆盖
+
+# 文件过滤
+path_filters:
+  # 包含的文件模式
+  include:
+    - "**/*.py"
+    - "**/*.ts"
+    - "**/*.js"
+    - "**/*.md"
+    - "**/*.yml"
+    - "**/*.yaml"
+    - "**/*.json"
+  
+  # 排除的文件模式
+  exclude:
+    - "**/node_modules/**"
+    - "**/venv/**"
+    - "**/env/**"
+    - "**/__pycache__/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/*.log"
+    - "**/tests/examples/**"  # 排除测试示例
+
+# 特定语言的设置
+python:
+  # Python 特定的审查规则
+  style_guide: "pep8"
+  max_line_length: 127
+  
+typescript:
+  # TypeScript 特定的审查规则
+  style_guide: "standard"
+
+# 自定义审查指令
+instructions: |
+  请特别关注以下方面：
+  
+  1. **MCP 协议实现**：
+     - 确保 JSON-RPC 2.0 协议的正确实现
+     - 检查错误处理和响应格式
+     - 验证工具定义的完整性
+  
+  2. **OpenProject API 集成**：
+     - 检查 API 调用的错误处理
+     - 验证认证机制的安全性
+     - 确保数据转换的正确性
+  
+  3. **代码质量**：
+     - 检查异常处理的完整性
+     - 验证日志记录的适当性
+     - 确保配置管理的安全性
+  
+  4. **文档和注释**：
+     - 确保公共 API 有适当的文档字符串
+     - 检查复杂逻辑的注释说明
+     - 验证 README 和配置示例的准确性
+  
+  5. **安全性**：
+     - 检查敏感信息（如 API 密钥）的处理
+     - 验证输入验证和清理
+     - 确保没有硬编码的凭据
+
+# 忽略特定的审查类型
+ignore:
+  - "style/line_length"  # 如果你想忽略行长度检查
+  
+# 团队设置
+team:
+  # 自动分配审查者
+  auto_assign_reviewers: true
+  
+  # 审查者列表（GitHub 用户名）
+  reviewers:
+    - "maboatitforce"  # 你的 GitHub 用户名

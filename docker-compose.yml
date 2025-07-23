@@ -1,0 +1,50 @@
+services:
+  openproject:
+    image: openproject/openproject:15
+    container_name: mcp-openproject
+    environment:
+      - OPENPROJECT_SECRET_KEY_BASE=08db74af7515f5b286e77fb9d864b6b474784e6ea326c925a757561738fd6a09c80f766283349d753f9ef4ffd91eb33cec0300b681c6c80ebe4be31d8809ee60
+      - OPENPROJECT_HOST__NAME=localhost:8090
+      - OPENPROJECT_HTTPS=false
+      - OPENPROJECT_DISABLE_DATABASE_ENVIRONMENT_CHECK=1
+      - OPENPROJECT_ENABLE_INTERNAL_ASSETS_MANAGEMENT=true
+      - OPENPROJECT_CSRF_PROTECTION=false
+      - OPENPROJECT_RAILS__FORCE__SSL=false
+      - OPENPROJECT_SECURITY_ALLOW_IFRAMING_FROM=*
+      - OPENPROJECT_SECURITY__CONTENT_SECURITY_POLICY=false
+      - OPENPROJECT_API_AUTHENTICATION_ALLOW_QUERY_PARAMETERS=true
+      - OPENPROJECT_RAILS__ALLOWED__HOSTS=localhost:8090,localhost
+      - OPENPROJECT_RAILS__RELATIVE__URL__ROOT=/
+      # 端口和URL配置
+      - OPENPROJECT_SERVER__NAME=localhost:8090
+      - OPENPROJECT_PROTOCOL=http
+      # 完整的URL配置
+      - OPENPROJECT_RAILS__RELATIVE__URL__ROOT=
+      - OPENPROJECT_WEB__HOSTNAME=localhost:8090
+      - OPENPROJECT_WEB__PORT=8090
+      # 资源配置 - 使用默认设置
+      - OPENPROJECT_RAILS__FORCE__SSL=false
+      - OPENPROJECT_RAILS__SERVE__STATIC__FILES=true
+      - OPENPROJECT_LOG__LEVEL=debug
+      - OPENPROJECT_RAILS__LOG__LEVEL=debug
+      - OPENPROJECT_WEB__WORKERS=1
+      - OPENPROJECT_WEB__TIMEOUT=120
+    volumes:
+      - ./data/pgdata:/var/openproject/pgdata
+      - ./data/assets:/var/openproject/assets
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: mcp-openproject-nginx
+    ports:
+      - "8090:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - openproject
+    restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge
