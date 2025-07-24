@@ -1,0 +1,37 @@
+data_sources:
+- description: 项目基础信息
+  fields:
+  - project_name
+  - start_date
+  - end_date
+  - completion_rate
+  name: project_basic
+sections:
+- content_template: '## 本周总结
+
+
+    项目: {{project_name}}
+
+    完成率: {{completion_rate}}%
+
+    主要成果: 本周完成了 {{completed_work_packages}} 个工作包。'
+  order: 1
+  required: true
+  section_id: summary
+  section_name: 本周总结
+- content_template: '## 下周计划
+
+
+    计划完成 {{planned_completion_work_packages}} 个工作包，目标完成率 {{target_completion_rate}}%。'
+  order: 2
+  required: true
+  section_id: next_week
+  section_name: 下周计划
+template_info:
+  created_by: team_leader
+  description: 适合小团队的简化周报格式
+  name: 简化周报模板
+  type: weekly
+  updated_at: '2025-07-24T16:06:45.029071'
+  version: '1.0'
+title_template: '{{project_name}} 简化周报 ({{start_date}} - {{end_date}})'

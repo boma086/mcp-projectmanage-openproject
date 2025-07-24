@@ -1,0 +1,243 @@
+# 完整的周报模板配置文件
+template_info:
+  name: "完整周报模板"
+  type: "weekly"
+  description: "包含所有关键信息的完整周报格式"
+  created_by: "team_leader"
+  version: "2.0"
+
+# 报告标题模板
+title_template: "{{project_name}} 周报 ({{start_date}} - {{end_date}})"
+
+# 报告章节配置
+sections:
+  - section_id: "overview"
+    section_name: "项目概览"
+    order: 1
+    required: true
+    content_template: |
+      ## 项目概览
+      
+      **项目名称**: {{project_name}}
+      **报告周期**: {{start_date}} 至 {{end_date}}
+      **项目状态**: {% if completion_rate >= 90 %}即将完成{% elif completion_rate >= 70 %}进展良好{% elif completion_rate >= 50 %}正常进行{% else %}需要关注{% endif %}
+      **团队成员**: {{team_member_count|default(5)}} 人
+      
+      本周项目整体进展{% if completion_rate >= 70 %}良好{% else %}需要关注{% endif %}，团队协作{% if team_morale == '良好' %}顺畅{% else %}有待改善{% endif %}。
+
+  - section_id: "progress"
+    section_name: "进度统计"
+    order: 2
+    required: true
+    content_template: |
+      ## 进度统计
+      
+      | 指标 | 数量 | 百分比 |
+      |------|------|--------|
+      | 总工作包 | {{total_work_packages}} | 100% |
+      | 已完成 | {{completed_work_packages}} | {{completion_rate}}% |
+      | 进行中 | {{in_progress_work_packages}} | {{(in_progress_work_packages / total_work_packages * 100)|round(1) if total_work_packages > 0 else 0}}% |
+      | 本周新增 | {{weekly_new_work_packages|default(0)}} | - |
+      | 本周完成 | {{weekly_completed_work_packages|default(0)}} | - |
+
+  - section_id: "achievements"
+    section_name: "本周成果"
+    order: 3
+    required: false
+    content_template: |
+      ## 本周成果
+      
+      ### 主要完成事项
+      {% if weekly_completed_work_packages > 0 %}
+      - 本周成功完成 {{weekly_completed_work_packages}} 个工作包
+      - 项目整体完成率达到 {{completion_rate}}%
+      {% else %}
+      - 本周主要专注于现有任务的推进
+      - 多个工作包正在稳步进行中
+      {% endif %}
+      
+      ### 重要里程碑
+      {% if completion_rate >= 25 %}
+      - ✅ 项目启动阶段 - 已完成
+      {% endif %}
+      {% if completion_rate >= 50 %}
+      - ✅ 核心功能开发 - 已完成
+      {% elif completion_rate >= 25 %}
+      - 🔄 核心功能开发 - 进行中
+      {% else %}
+      - ⏳ 核心功能开发 - 计划中
+      {% endif %}
+      {% if completion_rate >= 75 %}
+      - ✅ 系统测试 - 已完成
+      {% elif completion_rate >= 50 %}
+      - 🔄 系统测试 - 进行中
+      {% else %}
+      - ⏳ 系统测试 - 计划中
+      {% endif %}
+
+  - section_id: "issues"
+    section_name: "问题与风险"
+    order: 4
+    required: true
+    content_template: |
+      ## 问题与风险
+      
+      ### 当前问题
+      {% if completion_rate < 50 %}
+      - **进度风险**: 项目完成率较低({{completion_rate}}%)，需要加快推进速度
+        - 建议: 增加资源投入或调整优先级
+      {% endif %}
+      {% if support_needed %}
+      - **资源需求**: {{support_needed}}
+        - 负责人: Team Leader
+        - 预计解决时间: 下周内
+      {% endif %}
+      
+      ### 风险提醒
+      {% if completion_rate < 30 %}
+      - **高风险**: 项目进度严重滞后，可能影响交付时间
+      {% elif completion_rate < 60 %}
+      - **中风险**: 项目进度略有延迟，需要密切关注
+      {% else %}
+      - **低风险**: 项目进展顺利，风险可控
+      {% endif %}
+
+  - section_id: "next_week"
+    section_name: "下周计划"
+    order: 5
+    required: true
+    content_template: |
+      ## 下周计划
+      
+      ### 重点任务
+      - 推进 {{planned_new_work_packages|default(2)}} 个新工作包
+      - 完成 {{planned_completion_work_packages|default(2)}} 个进行中的工作包
+      - 目标完成率: {{target_completion_rate|default(80)}}%
+      
+      ### 预期目标
+      - 完成率目标: {{target_completion_rate|default(80)}}%
+      - 新增工作包: {{planned_new_work_packages|default(2)}} 个
+      - 计划完成: {{planned_completion_work_packages|default(2)}} 个
+
+  - section_id: "team_status"
+    section_name: "团队状态"
+    order: 6
+    required: false
+    content_template: |
+      ## 团队状态
+      
+      ### 工作负载分析
+      - 团队规模: {{team_member_count|default(5)}} 人
+      - 平均工作负载: {{(total_work_packages / team_member_count)|round(1) if team_member_count > 0 else 0}} 个任务/人
+      - 负载状态: {% if (total_work_packages / team_member_count) > 4 %}较重{% elif (total_work_packages / team_member_count) > 2 %}适中{% else %}较轻{% endif %}
+      
+      ### 团队动态
+      - 团队士气: {{team_morale|default('良好')}}
+      - 协作效率: {{collaboration_efficiency|default('高')}}
+      - 需要支持: {{support_needed|default('暂无特殊需求')}}
+
+  - section_id: "metrics"
+    section_name: "关键指标"
+    order: 7
+    required: false
+    content_template: |
+      ## 关键指标
+      
+      - **项目健康度**: {% if completion_rate >= 80 %}🟢 优秀{% elif completion_rate >= 60 %}🟡 良好{% elif completion_rate >= 40 %}🟠 需要关注{% else %}🔴 需要改进{% endif %} ({{completion_rate}}%)
+      - **团队满意度**: {% if team_morale == '很好' %}😊 很好{% elif team_morale == '良好' %}😊 良好{% elif team_morale == '一般' %}😐 一般{% else %}😟 需要关注{% endif %}
+      - **协作效率**: {% if collaboration_efficiency == '很高' %}⚡ 很高{% elif collaboration_efficiency == '高' %}⚡ 高{% elif collaboration_efficiency == '中等' %}⚡ 中等{% else %}⚡ 需要改进{% endif %}
+      - **完成率趋势**: {% if completion_rate >= 70 %}📈 上升{% elif completion_rate >= 40 %}📊 稳定{% else %}📉 需要提升{% endif %}
+
+  - section_id: "next_focus"
+    section_name: "下周关注点"
+    order: 8
+    required: false
+    content_template: |
+      ## 下周关注点
+      
+      {% if completion_rate < 50 %}
+      1. **进度提升**: 重点关注项目进度，确保按时交付
+      {% endif %}
+      {% if support_needed %}
+      2. **资源支持**: 解决当前资源需求问题
+      {% endif %}
+      3. **质量保证**: 在推进进度的同时确保交付质量
+      4. **团队协作**: 继续保持良好的团队合作氛围
+      
+      ---
+      
+      **报告生成时间**: {{end_date}}
+      **下次报告时间**: 下周同一时间
+      **报告人**: Team Leader
+
+# 数据源配置
+data_sources:
+  - name: "project_basic"
+    description: "项目基础信息"
+    fields: ["project_name", "project_id", "start_date", "end_date"]
+    
+  - name: "work_packages"
+    description: "工作包数据"
+    fields: ["total_work_packages", "completed_work_packages", "in_progress_work_packages", "completion_rate"]
+    
+  - name: "weekly_stats"
+    description: "周度统计"
+    fields: ["weekly_new_work_packages", "weekly_completed_work_packages"]
+    
+  - name: "team_info"
+    description: "团队信息"
+    fields: ["team_member_count", "team_morale", "collaboration_efficiency"]
+    
+  - name: "planning"
+    description: "计划信息"
+    fields: ["planned_new_work_packages", "planned_completion_work_packages", "target_completion_rate", "support_needed"]
+
+# 可编辑字段配置
+editable_fields:
+  - field_name: "team_morale"
+    field_type: "select"
+    field_label: "团队士气"
+    options: ["很好", "良好", "一般", "需要关注"]
+    default_value: "良好"
+    
+  - field_name: "collaboration_efficiency"
+    field_type: "select"
+    field_label: "协作效率"
+    options: ["很高", "高", "中等", "需要改进"]
+    default_value: "高"
+    
+  - field_name: "support_needed"
+    field_type: "text"
+    field_label: "需要的支持"
+    placeholder: "请描述团队需要的支持..."
+    
+  - field_name: "target_completion_rate"
+    field_type: "number"
+    field_label: "下周完成率目标(%)"
+    min_value: 0
+    max_value: 100
+    default_value: 80
+    
+  - field_name: "planned_new_work_packages"
+    field_type: "number"
+    field_label: "计划新增工作包数量"
+    min_value: 0
+    max_value: 20
+    default_value: 2
+    
+  - field_name: "planned_completion_work_packages"
+    field_type: "number"
+    field_label: "计划完成工作包数量"
+    min_value: 0
+    max_value: 20
+    default_value: 2
+
+# 样式配置
+styling:
+  theme: "professional"
+  font_family: "Arial, sans-serif"
+  primary_color: "#2563eb"
+  secondary_color: "#64748b"
+  include_charts: true
+  include_tables: true
+  show_progress_bars: true

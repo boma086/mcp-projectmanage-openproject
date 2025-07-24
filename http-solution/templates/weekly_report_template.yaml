@@ -1,0 +1,168 @@
+# 周报模板配置文件
+template_info:
+  name: "团队周报模板"
+  type: "weekly"
+  description: "标准的团队周报格式"
+  created_by: "team_leader"
+  version: "1.0"
+
+# 报告标题模板
+title_template: "{{project_name}} 周报 ({{start_date}} - {{end_date}})"
+
+# 报告章节配置
+sections:
+  - section_id: "overview"
+    section_name: "项目概览"
+    order: 1
+    required: true
+    content_template: |
+      ## 项目概览
+      
+      **项目名称**: {{project_name}}
+      **报告周期**: {{start_date}} 至 {{end_date}}
+      **项目状态**: {{project_status}}
+      **团队成员**: {{team_member_count}} 人
+      
+      本周项目整体进展良好，团队协作顺畅。
+
+  - section_id: "progress"
+    section_name: "进度统计"
+    order: 2
+    required: true
+    content_template: |
+      ## 进度统计
+      
+      | 指标 | 数量 | 百分比 |
+      |------|------|--------|
+      | 总工作包 | {{total_work_packages}} | 100% |
+      | 已完成 | {{completed_work_packages}} | {{completion_rate}}% |
+      | 进行中 | {{in_progress_work_packages}} | {{in_progress_rate}}% |
+      | 本周新增 | {{weekly_new_work_packages}} | - |
+      | 本周完成 | {{weekly_completed_work_packages}} | - |
+
+  - section_id: "achievements"
+    section_name: "本周成果"
+    order: 3
+    required: false
+    content_template: |
+      ## 本周成果
+      
+      ### 主要完成事项
+      {{#weekly_completed_items}}
+      - **{{subject}}** ({{type}}) - {{assigned_to}}
+      {{/weekly_completed_items}}
+      
+      ### 重要里程碑
+      {{#milestones}}
+      - {{milestone_name}} - {{status}}
+      {{/milestones}}
+
+  - section_id: "issues"
+    section_name: "问题与风险"
+    order: 4
+    required: true
+    content_template: |
+      ## 问题与风险
+      
+      ### 当前问题
+      {{#current_issues}}
+      - **{{issue_title}}**: {{issue_description}}
+        - 负责人: {{assigned_to}}
+        - 预计解决时间: {{expected_resolution}}
+      {{/current_issues}}
+      
+      ### 风险提醒
+      {{#risk_items}}
+      - **{{risk_level}}风险**: {{risk_description}}
+      {{/risk_items}}
+
+  - section_id: "next_week"
+    section_name: "下周计划"
+    order: 5
+    required: true
+    content_template: |
+      ## 下周计划
+      
+      ### 重点任务
+      {{#next_week_tasks}}
+      - {{task_name}} - 负责人: {{assigned_to}}
+      {{/next_week_tasks}}
+      
+      ### 预期目标
+      - 完成率目标: {{target_completion_rate}}%
+      - 新增工作包: {{planned_new_work_packages}} 个
+      - 计划完成: {{planned_completion_work_packages}} 个
+
+  - section_id: "team_status"
+    section_name: "团队状态"
+    order: 6
+    required: false
+    content_template: |
+      ## 团队状态
+      
+      ### 工作负载分析
+      {{#team_workload}}
+      - **{{member_name}}**: {{workload_count}} 个任务 ({{workload_status}})
+      {{/team_workload}}
+      
+      ### 团队动态
+      - 团队士气: {{team_morale}}
+      - 协作效率: {{collaboration_efficiency}}
+      - 需要支持: {{support_needed}}
+
+# 数据源配置
+data_sources:
+  - name: "project_basic"
+    description: "项目基础信息"
+    fields: ["project_name", "project_id", "project_status"]
+    
+  - name: "work_packages"
+    description: "工作包数据"
+    fields: ["total_work_packages", "completed_work_packages", "in_progress_work_packages"]
+    
+  - name: "weekly_stats"
+    description: "周度统计"
+    fields: ["weekly_new_work_packages", "weekly_completed_work_packages"]
+    
+  - name: "team_info"
+    description: "团队信息"
+    fields: ["team_member_count", "team_workload"]
+    
+  - name: "risk_assessment"
+    description: "风险评估"
+    fields: ["risk_items", "current_issues"]
+
+# 可编辑字段配置
+editable_fields:
+  - field_name: "team_morale"
+    field_type: "select"
+    field_label: "团队士气"
+    options: ["很好", "良好", "一般", "需要关注"]
+    default_value: "良好"
+    
+  - field_name: "collaboration_efficiency"
+    field_type: "select"
+    field_label: "协作效率"
+    options: ["很高", "高", "中等", "需要改进"]
+    default_value: "高"
+    
+  - field_name: "support_needed"
+    field_type: "text"
+    field_label: "需要的支持"
+    placeholder: "请描述团队需要的支持..."
+    
+  - field_name: "target_completion_rate"
+    field_type: "number"
+    field_label: "下周完成率目标(%)"
+    min_value: 0
+    max_value: 100
+    default_value: 80
+
+# 样式配置
+styling:
+  theme: "professional"
+  font_family: "Arial, sans-serif"
+  primary_color: "#2563eb"
+  secondary_color: "#64748b"
+  include_charts: true
+  include_tables: true

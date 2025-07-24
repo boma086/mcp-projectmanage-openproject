@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>报告模板编辑器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; text-align: center; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { font-size: 1.2em; opacity: 0.9; }
+        .main-content { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+        .panel { background: white; border-radius: 10px; padding: 25px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+        .panel h2 { color: #4a5568; margin-bottom: 20px; font-size: 1.5em; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #2d3748; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 14px; transition: border-color 0.3s; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #667eea; }
+        .form-group textarea { height: 120px; resize: vertical; }
+        .btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 600; transition: transform 0.2s; margin-right: 10px; }
+        .btn:hover { transform: translateY(-2px); }
+        .btn-secondary { background: linear-gradient(135deg, #718096 0%, #4a5568 100%); }
+        .template-list { margin-bottom: 20px; }
+        .template-item { background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 15px; margin-bottom: 10px; cursor: pointer; transition: all 0.3s; }
+        .template-item:hover { background: #edf2f7; border-color: #cbd5e0; }
+        .template-item.active { background: #ebf8ff; border-color: #667eea; }
+        .template-item h3 { color: #2d3748; margin-bottom: 5px; }
+        .template-item p { color: #718096; font-size: 14px; }
+        .preview-area { background: #f8f9fa; border: 1px solid #e2e8f0; border-radius: 6px; padding: 20px; min-height: 400px; font-family: 'Courier New', monospace; white-space: pre-wrap; overflow-y: auto; }
+        .status { padding: 10px; border-radius: 6px; margin-bottom: 20px; font-weight: 600; }
+        .status.success { background: #c6f6d5; color: #22543d; border: 1px solid #9ae6b4; }
+        .status.error { background: #fed7d7; color: #742a2a; border: 1px solid #fc8181; }
+        .loading { display: inline-block; width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 报告模板编辑器</h1>
+            <p>为Team Leader提供零技术门槛的报告模板编辑体验</p>
+        </div>
+        
+        <div class="main-content">
+            <div class="panel">
+                <h2>🗂 模板管理</h2>
+                <div id="status" class="status hidden"></div>
+                <div class="template-list" id="templateList">
+                    <div class="loading"></div>
+                    <p>正在加载模板列表...</p>
+                </div>
+                
+                <div class="form-group">
+                    <label for="templateName">模板名称</label>
+                    <input type="text" id="templateName" placeholder="输入模板名称">
+                </div>
+                
+                <div class="form-group">
+                    <label for="templateType">模板类型</label>
+                    <select id="templateType">
+                        <option value="weekly">周报</option>
+                        <option value="monthly">月报</option>
+                        <option value="quarterly">季报</option>
+                        <option value="custom">自定义</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="templateDescription">模板描述</label>
+                    <textarea id="templateDescription" placeholder="描述这个模板的用途和特点"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="reportTitle">报告标题模板</label>
+                    <input type="text" id="reportTitle" placeholder="{{project_name}} 周报 ({{start_date}} - {{end_date}})">
+                </div>
+                
+                <button class="btn" onclick="saveTemplate()">💾 保存模板</button>
+                <button class="btn btn-secondary" onclick="newTemplate()">📄 新建模板</button>
+            </div>
+            
+            <div class="panel">
+                <h2>👀 预览和测试</h2>
+                
+                <div class="form-group">
+                    <label for="projectId">测试项目ID</label>
+                    <input type="text" id="projectId" value="1" placeholder="输入项目ID进行测试">
+                </div>
+                
+                <div class="form-group">
+                    <label for="customData">自定义数据 (JSON格式)</label>
+                    <textarea id="customData" placeholder='{"team_morale": "良好", "support_needed": "需要更多测试资源"}'></textarea>
+                </div>
+                
+                <button class="btn" onclick="generatePreview()">🔍 生成预览</button>
+                <button class="btn btn-secondary" onclick="downloadReport()">📥 下载报告</button>
+                
+                <h3 style="margin-top: 30px; margin-bottom: 15px;">📋 报告预览</h3>
+                <div class="preview-area" id="previewArea">
+                    选择一个模板并点击"生成预览"来查看报告效果...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8010';
+        let currentTemplateId = null;
+
+        document.addEventListener('DOMContentLoaded', function() { loadTemplates(); });
+
+        async function loadTemplates() {
+            try {
+                const response = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0", id: 1, method: "tools/call",
+                        params: { name: "list_report_templates", arguments: {} }
+                    })
+                });
+
+                const data = await response.json();
+                if (data.result?.content) {
+                    displayTemplateList(data.result.content[0].text);
+                }
+            } catch (error) {
+                showStatus('加载模板列表失败: ' + error.message, 'error');
+            }
+        }
+
+        function displayTemplateList(content) {
+            const templateList = document.getElementById('templateList');
+            templateList.innerHTML = '';
+
+            const lines = content.split('\n');
+            lines.forEach(line => {
+                if (line.includes('ID:') && line.includes('类型:')) {
+                    const match = line.match(/- (.+) \(ID: (.+), 类型: (.+)\)/);
+                    if (match) {
+                        const [, name, id, type] = match;
+                        const templateItem = document.createElement('div');
+                        templateItem.className = 'template-item';
+                        templateItem.onclick = () => selectTemplate(id, name, type);
+                        templateItem.innerHTML = `<h3>${name}</h3><p>ID: ${id} | 类型: ${type}</p>`;
+                        templateList.appendChild(templateItem);
+                    }
+                }
+            });
+        }
+
+        function selectTemplate(id, name, type) {
+            currentTemplateId = id;
+            document.querySelectorAll('.template-item').forEach(item => item.classList.remove('active'));
+            event.target.closest('.template-item').classList.add('active');
+            
+            document.getElementById('templateName').value = name;
+            document.getElementById('templateType').value = type;
+            showStatus(`已选择模板: ${name}`, 'success');
+        }
+
+        async function generatePreview() {
+            if (!currentTemplateId) {
+                showStatus('请先选择一个模板', 'error');
+                return;
+            }
+
+            const projectId = document.getElementById('projectId').value;
+            let customData = {};
+            
+            const customDataText = document.getElementById('customData').value;
+            if (customDataText.trim()) {
+                try {
+                    customData = JSON.parse(customDataText);
+                } catch (error) {
+                    showStatus('自定义数据格式错误', 'error');
+                    return;
+                }
+            }
+
+            try {
+                const response = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0", id: 2, method: "tools/call",
+                        params: {
+                            name: "generate_report_from_template",
+                            arguments: { template_id: currentTemplateId, project_id: projectId, custom_data: customData }
+                        }
+                    })
+                });
+
+                const data = await response.json();
+                if (data.result?.content) {
+                    document.getElementById('previewArea').textContent = data.result.content[0].text;
+                    showStatus('报告预览生成成功', 'success');
+                } else {
+                    showStatus('生成预览失败', 'error');
+                }
+            } catch (error) {
+                showStatus('生成预览失败: ' + error.message, 'error');
+            }
+        }
+
+        async function saveTemplate() {
+            const name = document.getElementById('templateName').value;
+            const type = document.getElementById('templateType').value;
+            const description = document.getElementById('templateDescription').value;
+            const title = document.getElementById('reportTitle').value;
+
+            if (!name || !title) {
+                showStatus('请填写模板名称和报告标题', 'error');
+                return;
+            }
+
+            const templateData = {
+                template_info: { name, type, description, created_by: "team_leader", version: "1.0" },
+                title_template: title,
+                sections: [{
+                    section_id: "summary", section_name: "总结", order: 1, required: true,
+                    content_template: "## 总结\n\n项目: {{project_name}}\n完成率: {{completion_rate}}%"
+                }],
+                data_sources: [{
+                    name: "project_basic", description: "项目基础信息",
+                    fields: ["project_name", "completion_rate"]
+                }]
+            };
+
+            try {
+                const templateId = name.toLowerCase().replace(/\s+/g, '_');
+                const response = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0", id: 3, method: "tools/call",
+                        params: { name: "save_report_template", arguments: { template_id: templateId, template_data: templateData } }
+                    })
+                });
+
+                const data = await response.json();
+                if (data.result) {
+                    showStatus('模板保存成功', 'success');
+                    loadTemplates();
+                } else {
+                    showStatus('模板保存失败', 'error');
+                }
+            } catch (error) {
+                showStatus('模板保存失败: ' + error.message, 'error');
+            }
+        }
+
+        function newTemplate() {
+            currentTemplateId = null;
+            document.getElementById('templateName').value = '';
+            document.getElementById('templateType').value = 'weekly';
+            document.getElementById('templateDescription').value = '';
+            document.getElementById('reportTitle').value = '{{project_name}} 报告 ({{start_date}} - {{end_date}})';
+            document.getElementById('previewArea').textContent = '新建模板，填写信息后点击"生成预览"查看效果...';
+            document.querySelectorAll('.template-item').forEach(item => item.classList.remove('active'));
+            showStatus('已创建新模板', 'success');
+        }
+
+        function downloadReport() {
+            const content = document.getElementById('previewArea').textContent;
+            if (!content || content.includes('选择一个模板')) {
+                showStatus('请先生成预览', 'error');
+                return;
+            }
+
+            const blob = new Blob([content], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `report_${new Date().toISOString().split('T')[0]}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showStatus('报告已下载', 'success');
+        }
+
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.classList.remove('hidden');
+            setTimeout(() => status.classList.add('hidden'), 3000);
+        }
+    </script>
+</body>
+</html>
