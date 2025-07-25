@@ -1,0 +1,194 @@
+# 日本式日報テンプレート
+template_info:
+  name: "日本式日報テンプレート"
+  type: "daily"
+  description: "日本市場向けの詳細な日報形式"
+  created_by: "team_leader"
+  version: "1.0"
+  language: "ja"
+
+# 報告標題模板
+title_template: "{{project_name}} 日報 ({{report_date|default('今日')}})"
+
+# 報告章節配置
+sections:
+  - section_id: "daily_work"
+    section_name: "1. 本日実施した作業"
+    order: 1
+    required: true
+    content_template: |
+      ## 1. 本日実施した作業
+      
+      **作業時間**: 09:00 - 18:00 (実働8時間)
+      
+      ### 主要作業内容
+      {% for wp in work_packages_today %}
+      - **{{wp.subject}}** (ID: {{wp.id}})
+        - 開始時間: 09:00
+        - 終了時間: 12:00
+        - 所要時間: 3時間
+        - 進捗: {{wp.progress|default(0)}}%
+        {% if wp.description %}
+        - 詳細: {{wp.description[:100]}}...
+        {% endif %}
+      {% else %}
+      - 本日は主に{{project_name}}プロジェクトの進捗確認と計画調整を実施
+      - 完成率: {{completion_rate}}%の確認と分析
+      {% endfor %}
+
+  - section_id: "completed_tasks"
+    section_name: "2. 完了したタスク"
+    order: 2
+    required: true
+    content_template: |
+      ## 2. 完了したタスク
+      
+      ### 本日完了分
+      {% if completed_work_packages > 0 %}
+      - 完了タスク数: {{completed_work_packages}}件
+      - 完了時刻: 各タスク完了時に記録
+      - 成果物: 各タスクの成果物を確認済み
+      {% else %}
+      - 本日完了したタスクはありませんが、進行中タスクの進捗を推進
+      {% endif %}
+      
+      ### 累積完了状況
+      - プロジェクト全体完了率: {{completion_rate}}%
+      - 完了タスク: {{completed_work_packages}}/{{total_work_packages}}件
+
+  - section_id: "in_progress_tasks"
+    section_name: "3. 進行中のタスク"
+    order: 3
+    required: true
+    content_template: |
+      ## 3. 進行中のタスク
+      
+      ### 継続作業中
+      {% if in_progress_work_packages > 0 %}
+      - 進行中タスク数: {{in_progress_work_packages}}件
+      - 平均進捗率: {{(completion_rate * total_work_packages - completed_work_packages * 100) / in_progress_work_packages if in_progress_work_packages > 0 else 0|round(1)}}%
+      {% else %}
+      - 現在進行中の特定タスクはありません
+      {% endif %}
+      
+      ### 明日継続予定
+      - {{project_name}}プロジェクトの次フェーズ準備
+      - 残りタスク: {{remaining_work_packages}}件の計画確認
+
+  - section_id: "issues_problems"
+    section_name: "4. 発生した課題・問題"
+    order: 4
+    required: true
+    content_template: |
+      ## 4. 発生した課題・問題
+      
+      ### 技術的課題
+      {% if completion_rate < 50 %}
+      - **進捗遅延**: プロジェクト完成率が{{completion_rate}}%と予定より低い状況
+        - 原因: リソース不足または技術的困難
+        - 対応策: 明日チームミーティングで対策検討
+      {% endif %}
+      
+      ### ブロッカー
+      {% if remaining_work_packages > total_work_packages * 0.7 %}
+      - **作業量過多**: 残りタスクが{{remaining_work_packages}}件と多い状況
+        - 解決策: 優先度の再評価と作業分担の見直し
+        - 相談事項: マネージャーとの1on1で相談予定
+      {% endif %}
+      
+      ### その他の問題
+      - 特に大きな問題は発生していません
+
+  - section_id: "tomorrow_plan"
+    section_name: "5. 明日の予定"
+    order: 5
+    required: true
+    content_template: |
+      ## 5. 明日の予定
+      
+      ### 優先作業項目
+      1. {{project_name}}プロジェクトの進捗推進
+      2. 未完了タスクの優先度確認
+      3. チームとの進捗共有ミーティング
+      
+      ### 準備が必要な事項
+      - プロジェクト資料の最新化
+      - 進捗報告書の準備
+      {% if completion_rate < 70 %}
+      - 遅延対策案の検討
+      {% endif %}
+      
+      ### 予定時間配分
+      - 午前: 個人作業 (4時間)
+      - 午後: チームミーティング・調整作業 (4時間)
+
+  - section_id: "insights_learnings"
+    section_name: "6. 所感・気づき"
+    order: 6
+    required: true
+    content_template: |
+      ## 6. 所感・気づき
+      
+      ### 本日の振り返り
+      - プロジェクト{{project_name}}の現在の完成率{{completion_rate}}%について分析
+      - 作業効率と品質のバランスを意識した取り組みを実施
+      
+      ### 学んだこと
+      - プロジェクト管理における進捗可視化の重要性を再認識
+      - チーム連携の効果的な方法について新たな知見を獲得
+      
+      ### 改善点
+      {% if completion_rate < 80 %}
+      - より効率的な作業手順の検討が必要
+      - 定期的な進捗確認の頻度を増やすことを検討
+      {% else %}
+      - 現在の作業ペースを維持しつつ、品質向上に注力
+      {% endif %}
+      
+      ### 明日への申し送り
+      - {{project_name}}プロジェクトの継続的な進捗管理
+      - チーム全体のモチベーション維持に注意
+
+# データソース定義
+data_sources:
+  - name: "project_basic"
+    description: "プロジェクト基本情報"
+    fields: ["project_name", "completion_rate", "total_work_packages"]
+  - name: "daily_progress"
+    description: "日次進捗情報"
+    fields: ["completed_work_packages", "in_progress_work_packages", "remaining_work_packages"]
+  - name: "work_packages_today"
+    description: "本日の作業パッケージ"
+    fields: ["work_packages_today"]
+
+# 可編集フィールド設定
+editable_fields:
+  - field_name: "report_date"
+    field_type: "date"
+    field_label: "報告日"
+    default_value: "今日"
+  - field_name: "work_hours"
+    field_type: "number"
+    field_label: "実働時間"
+    default_value: 8
+    min_value: 1
+    max_value: 12
+  - field_name: "team_meeting_time"
+    field_type: "text"
+    field_label: "チームミーティング時間"
+    placeholder: "例: 14:00-15:00"
+  - field_name: "special_notes"
+    field_type: "textarea"
+    field_label: "特記事項"
+    placeholder: "その他の重要な情報があれば記載..."
+
+# スタイル設定
+styling:
+  theme: "japanese_business"
+  font_family: "Noto Sans JP, Arial, sans-serif"
+  primary_color: "#1e40af"
+  secondary_color: "#64748b"
+  include_charts: false
+  include_tables: true
+  date_format: "YYYY年MM月DD日"
+  time_format: "HH:mm"

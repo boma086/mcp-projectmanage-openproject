@@ -1,0 +1,12 @@
+# HTTP 解决方案依赖
+mcp==1.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+uvicorn>=0.24.0
+pydantic[email]>=2.5.0
+pydantic-settings>=2.0.0
+PyYAML>=6.0.1
+Jinja2>=3.1.2
+
+# 核心库 (本地安装)
+# -e ../mcp-core

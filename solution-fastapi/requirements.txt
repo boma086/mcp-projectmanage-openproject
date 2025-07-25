@@ -1,0 +1,13 @@
+# FastAPI 解决方案依赖
+fastapi>=0.116.0
+uvicorn>=0.35.0
+httpx>=0.28.0
+pydantic[email]>=2.11.0
+pydantic-settings>=2.10.0
+
+# 核心库 (本地安装)
+# -e ../mcp-core
+
+# 测试依赖
+pytest>=7.4.3
+pytest-asyncio>=0.21.1

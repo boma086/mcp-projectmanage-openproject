@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>报告模板编辑器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; text-align: center; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { font-size: 1.2em; opacity: 0.9; }
+        .main-content { display: grid; grid-template-rows: auto 1fr; gap: 30px; }
+        .panel { background: white; border-radius: 10px; padding: 25px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+        .panel h2 { color: #4a5568; margin-bottom: 20px; font-size: 1.5em; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #2d3748; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 14px; transition: border-color 0.3s; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #667eea; }
+        .form-group textarea { height: 120px; resize: vertical; }
+        .btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 600; transition: transform 0.2s; margin-right: 10px; }
+        .btn:hover { transform: translateY(-2px); }
+        .btn-secondary { background: linear-gradient(135deg, #718096 0%, #4a5568 100%); }
+        .template-list { margin-bottom: 20px; }
+        .template-item { background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 15px; margin-bottom: 10px; cursor: pointer; transition: all 0.3s; }
+        .template-item:hover { background: #edf2f7; border-color: #cbd5e0; }
+        .template-item.active { background: #ebf8ff; border-color: #667eea; }
+        .template-item h3 { color: #2d3748; margin-bottom: 5px; }
+        .template-item p { color: #718096; font-size: 14px; }
+        .preview-area {
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 32px;
+            min-height: 500px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans JP', Roboto, sans-serif;
+            overflow-y: auto;
+            line-height: 1.7;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            max-height: 80vh;
+        }
+
+        /* 标题样式 - 日本商务风格 */
+        .preview-area h1 {
+            color: #1a202c;
+            font-size: 2.25em;
+            font-weight: 700;
+            margin: 0 0 1.5em 0;
+            padding-bottom: 0.5em;
+            border-bottom: 3px solid #667eea;
+            position: relative;
+        }
+        .preview-area h1::after {
+            content: '';
+            position: absolute;
+            bottom: -3px;
+            left: 0;
+            width: 60px;
+            height: 3px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+
+        .preview-area h2 {
+            color: #2d3748;
+            font-size: 1.75em;
+            font-weight: 600;
+            margin: 2em 0 1em 0;
+            padding: 0.5em 0 0.5em 1em;
+            border-left: 4px solid #667eea;
+            background: linear-gradient(90deg, rgba(102, 126, 234, 0.1), transparent);
+            border-radius: 0 6px 6px 0;
+        }
+
+        .preview-area h3 {
+            color: #4a5568;
+            font-size: 1.4em;
+            font-weight: 600;
+            margin: 1.5em 0 0.8em 0;
+            padding-left: 0.5em;
+            border-left: 3px solid #a0aec0;
+        }
+
+        .preview-area h4 {
+            color: #718096;
+            font-size: 1.2em;
+            font-weight: 600;
+            margin: 1.2em 0 0.6em 0;
+        }
+
+        /* 表格样式 - 专业商务风格 */
+        .preview-area table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1.5em 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .preview-area th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-weight: 600;
+            padding: 12px 16px;
+            text-align: left;
+            font-size: 0.95em;
+            letter-spacing: 0.5px;
+        }
+        .preview-area td {
+            border-bottom: 1px solid #e2e8f0;
+            padding: 12px 16px;
+            text-align: left;
+            transition: background-color 0.2s;
+        }
+        .preview-area tr:nth-child(even) td {
+            background-color: #f7fafc;
+        }
+        .preview-area tr:hover td {
+            background-color: #edf2f7;
+        }
+
+        /* 代码样式 */
+        .preview-area code {
+            background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+            color: #e53e3e;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+            font-size: 0.9em;
+            border: 1px solid #cbd5e0;
+        }
+        .preview-area pre {
+            background: linear-gradient(135deg, #2d3748 0%, #4a5568 100%);
+            color: #e2e8f0;
+            padding: 1.5em;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1.5em 0;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        .preview-area pre code {
+            background: none;
+            color: inherit;
+            padding: 0;
+            border: none;
+        }
+
+        /* 引用样式 */
+        .preview-area blockquote {
+            border-left: 4px solid #667eea;
+            margin: 1.5em 0;
+            padding: 1em 1.5em;
+            background: linear-gradient(90deg, rgba(102, 126, 234, 0.1), transparent);
+            color: #4a5568;
+            font-style: italic;
+            border-radius: 0 6px 6px 0;
+        }
+
+        /* 列表样式 */
+        .preview-area ul, .preview-area ol {
+            margin: 1em 0;
+            padding-left: 2em;
+        }
+        .preview-area li {
+            margin: 0.5em 0;
+            line-height: 1.6;
+        }
+        .preview-area ul li::marker {
+            color: #667eea;
+        }
+
+        /* 文本样式 */
+        .preview-area strong {
+            font-weight: 700;
+            color: #2d3748;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), transparent);
+            padding: 1px 3px;
+            border-radius: 3px;
+        }
+        .preview-area em {
+            font-style: italic;
+            color: #4a5568;
+        }
+
+        /* 段落样式 */
+        .preview-area p {
+            margin: 1em 0;
+            text-align: justify;
+            text-justify: inter-ideograph;
+        }
+
+        /* 状态指示器样式 */
+        .preview-area .status-indicator {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+            margin-right: 8px;
+        }
+        .preview-area .status-good { background: #c6f6d5; color: #22543d; }
+        .preview-area .status-warning { background: #fef5e7; color: #c05621; }
+        .preview-area .status-danger { background: #fed7d7; color: #c53030; }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .preview-area {
+                padding: 20px;
+                font-size: 0.9em;
+            }
+            .preview-area h1 { font-size: 1.8em; }
+            .preview-area h2 { font-size: 1.5em; }
+            .preview-area table { font-size: 0.85em; }
+        }
+        .status { padding: 10px; border-radius: 6px; margin-bottom: 20px; font-weight: 600; }
+        .status.success { background: #c6f6d5; color: #22543d; border: 1px solid #9ae6b4; }
+        .status.error { background: #fed7d7; color: #742a2a; border: 1px solid #fc8181; }
+        .loading { display: inline-block; width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 报告模板编辑器</h1>
+            <p>为Team Leader提供零技术门槛的报告模板编辑体验</p>
+        </div>
+        
+        <div class="main-content">
+            <div class="panel">
+                <h2>🗂 模板管理</h2>
+                <div id="status" class="status hidden"></div>
+                <div class="template-list" id="templateList">
+                    <div class="loading"></div>
+                    <p>正在加载模板列表...</p>
+                </div>
+                
+                <div class="form-group">
+                    <label for="templateName">模板名称</label>
+                    <input type="text" id="templateName" placeholder="输入模板名称">
+                </div>
+                
+                <div class="form-group">
+                    <label for="templateType">模板类型</label>
+                    <select id="templateType">
+                        <option value="weekly">周报</option>
+                        <option value="monthly">月报</option>
+                        <option value="quarterly">季报</option>
+                        <option value="custom">自定义</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="templateDescription">模板描述</label>
+                    <textarea id="templateDescription" placeholder="描述这个模板的用途和特点"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="reportTitle">报告标题模板</label>
+                    <input type="text" id="reportTitle" placeholder="{{project_name}} 周报 ({{start_date}} - {{end_date}})">
+                </div>
+                
+                <button class="btn" onclick="saveTemplate()">💾 保存模板</button>
+                <button class="btn btn-secondary" onclick="newTemplate()">📄 新建模板</button>
+            </div>
+            
+            <div class="panel">
+                <h2>👀 预览和测试</h2>
+                
+                <div class="form-group">
+                    <label for="projectId">测试项目ID</label>
+                    <input type="text" id="projectId" value="1" placeholder="输入项目ID进行测试">
+                </div>
+                
+                <div class="form-group">
+                    <label for="customData">自定义数据 (JSON格式)</label>
+                    <textarea id="customData" placeholder='{"team_morale": "良好", "support_needed": "需要更多测试资源"}'></textarea>
+                </div>
+                
+                <button class="btn" onclick="generatePreview()">🔍 生成预览</button>
+                <button class="btn btn-secondary" onclick="downloadReport()">📥 下载报告</button>
+                
+                <h3 style="margin-top: 30px; margin-bottom: 15px;">📋 报告预览</h3>
+                <div class="preview-area" id="previewArea">
+                    选择一个模板并点击"生成预览"来查看报告效果...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 动态确定后端 API 地址，优先 URL 参数，其次同源
+        function getApiBase() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('api_base')) {
+                return urlParams.get('api_base');
+            }
+            // 修复：MCP 端点应该是 /mcp，不是根路径
+            return window.location.origin + '/mcp';
+        }
+        const API_BASE = getApiBase();
+        let currentTemplateId = null;
+        let lastGeneratedMarkdown = null; // 保存原始Markdown内容用于下载
+
+        // 增强的Markdown渲染函数
+        function renderMarkdown(markdown) {
+            let html = markdown;
+
+            // 预处理：保护代码块
+            const codeBlocks = [];
+            html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
+                const index = codeBlocks.length;
+                codeBlocks.push(code.trim());
+                return `__CODE_BLOCK_${index}__`;
+            });
+
+            // 预处理：保护行内代码
+            const inlineCodes = [];
+            html = html.replace(/`([^`]+)`/g, (match, code) => {
+                const index = inlineCodes.length;
+                inlineCodes.push(code);
+                return `__INLINE_CODE_${index}__`;
+            });
+
+            // 处理表格
+            html = html.replace(/(\|.+\|\n)+/g, (tableMatch) => {
+                const rows = tableMatch.trim().split('\n');
+                let tableHtml = '<table>';
+                let isFirstRow = true;
+
+                for (const row of rows) {
+                    if (row.includes('---')) continue; // 跳过分隔行
+
+                    const cells = row.split('|').slice(1, -1).map(cell => cell.trim());
+                    const tag = isFirstRow ? 'th' : 'td';
+                    tableHtml += '<tr>' + cells.map(cell => `<${tag}>${cell}</${tag}>`).join('') + '</tr>';
+                    isFirstRow = false;
+                }
+
+                tableHtml += '</table>';
+                return tableHtml;
+            });
+
+            // 处理标题
+            html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
+            html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+            html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+            html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+
+            // 处理状态指示器（日本式报告特有）
+            html = html.replace(/🔴\s*\*\*(.*?)\*\*/g, '<span class="status-indicator status-danger">🔴</span><strong>$1</strong>');
+            html = html.replace(/🟡\s*\*\*(.*?)\*\*/g, '<span class="status-indicator status-warning">🟡</span><strong>$1</strong>');
+            html = html.replace(/🟢\s*\*\*(.*?)\*\*/g, '<span class="status-indicator status-good">🟢</span><strong>$1</strong>');
+
+            // 处理粗体和斜体
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+
+            // 处理链接
+            html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+            // 处理列表
+            html = html.replace(/^[\s]*[-*+]\s+(.+)$/gm, '<li>$1</li>');
+            html = html.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
+            html = html.replace(/^[\s]*\d+\.\s+(.+)$/gm, '<li>$1</li>');
+
+            // 处理引用
+            html = html.replace(/^>\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+
+            // 处理段落
+            html = html.split('\n\n').map(paragraph => {
+                paragraph = paragraph.trim();
+                if (!paragraph) return '';
+                if (paragraph.startsWith('<h') || paragraph.startsWith('<table') ||
+                    paragraph.startsWith('<ul') || paragraph.startsWith('<ol') ||
+                    paragraph.startsWith('<blockquote') || paragraph.startsWith('<pre')) {
+                    return paragraph;
+                }
+                return `<p>${paragraph.replace(/\n/g, '<br>')}</p>`;
+            }).join('\n');
+
+            // 恢复代码块
+            codeBlocks.forEach((code, index) => {
+                html = html.replace(`__CODE_BLOCK_${index}__`, `<pre><code>${code}</code></pre>`);
+            });
+
+            // 恢复行内代码
+            inlineCodes.forEach((code, index) => {
+                html = html.replace(`__INLINE_CODE_${index}__`, `<code>${code}</code>`);
+            });
+
+            // 清理多余的标签
+            html = html.replace(/<p><\/p>/g, '');
+            html = html.replace(/<p>(<h[1-6]>.*?<\/h[1-6]>)<\/p>/g, '$1');
+            html = html.replace(/<p>(<table>.*?<\/table>)<\/p>/g, '$1');
+            html = html.replace(/<p>(<ul>.*?<\/ul>)<\/p>/g, '$1');
+            html = html.replace(/<p>(<ol>.*?<\/ol>)<\/p>/g, '$1');
+            html = html.replace(/<p>(<blockquote>.*?<\/blockquote>)<\/p>/g, '$1');
+            html = html.replace(/<p>(<pre>.*?<\/pre>)<\/p>/g, '$1');
+
+            return html;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() { loadTemplates(); });
+
+        async function loadTemplates() {
+            try {
+                const response = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0", id: 1, method: "tools/call",
+                        params: { name: "list_report_templates", arguments: {} }
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error('服务器响应异常: ' + response.status);
+                }
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error.message || '后端返回错误');
+                }
+                if (data.result?.content) {
+                    displayTemplateList(data.result.content[0].text);
+                }
+            } catch (error) {
+                showStatus('加载模板列表失败: ' + error.message, 'error');
+            }
+        }
+
+        function displayTemplateList(content) {
+            const templateList = document.getElementById('templateList');
+            templateList.innerHTML = '';
+
+            const lines = content.split('\n');
+            lines.forEach(line => {
+                if (line.includes('ID:') && line.includes('类型:')) {
+                    const match = line.match(/- (.+) \(ID: (.+), 类型: (.+)\)/);
+                    if (match) {
+                        const [, name, id, type] = match;
+                        const templateItem = document.createElement('div');
+                        templateItem.className = 'template-item';
+                        templateItem.onclick = (event) => selectTemplate(event, id, name, type);
+                        // 安全渲染 name 和 type，避免 XSS
+                        const h3 = document.createElement('h3');
+                        h3.textContent = name;
+                        const p = document.createElement('p');
+                        p.textContent = `ID: ${id} | 类型: ${type}`;
+                        templateItem.appendChild(h3);
+                        templateItem.appendChild(p);
+                        templateList.appendChild(templateItem);
+                    }
+                }
+            });
+        }
+
+        function selectTemplate(event, id, name, type) {
+            currentTemplateId = id;
+            document.querySelectorAll('.template-item').forEach(item => item.classList.remove('active'));
+            event.target.closest('.template-item').classList.add('active');
+            document.getElementById('templateName').value = name;
+            document.getElementById('templateType').value = type;
+            showStatus(`已选择模板: ${name}`, 'success');
+        }
+
+        async function generatePreview() {
+            if (!currentTemplateId) {
+                showStatus('请先选择一个模板', 'error');
+                return;
+            }
+
+            const projectId = document.getElementById('projectId').value;
+            let customData = {};
+            const customDataText = document.getElementById('customData').value;
+            if (customDataText.trim()) {
+                try {
+                    customData = JSON.parse(customDataText);
+                } catch (error) {
+                    showStatus('自定义数据格式错误', 'error');
+                    return;
+                }
+            }
+
+            try {
+                const response = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0", id: 2, method: "tools/call",
+                        params: {
+                            name: "generate_report_from_template",
+                            arguments: { template_id: currentTemplateId, project_id: projectId, custom_data: customData }
+                        }
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error('服务器响应异常: ' + response.status);
+                }
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error.message || '后端返回错误');
+                }
+                if (data.result?.content) {
+                    const markdownContent = data.result.content[0].text;
+                    lastGeneratedMarkdown = markdownContent; // 保存原始内容
+                    document.getElementById('previewArea').innerHTML = renderMarkdown(markdownContent);
+                    showStatus('报告预览生成成功', 'success');
+                } else {
+                    showStatus('生成预览失败', 'error');
+                }
+            } catch (error) {
+                showStatus('生成预览失败: ' + error.message, 'error');
+            }
+        }
+
+        async function saveTemplate() {
+            const name = document.getElementById('templateName').value;
+            const type = document.getElementById('templateType').value;
+            const description = document.getElementById('templateDescription').value;
+            const title = document.getElementById('reportTitle').value;
+
+            if (!name || !title) {
+                showStatus('请填写模板名称和报告标题', 'error');
+                return;
+            }
+
+            const templateData = {
+                template_info: { name, type, description, created_by: "team_leader", version: "1.0" },
+                title_template: title,
+                sections: [{
+                    section_id: "summary", section_name: "总结", order: 1, required: true,
+                    content_template: "## 总结\n\n项目: {{project_name}}\n完成率: {{completion_rate}}%"
+                }],
+                data_sources: [{
+                    name: "project_basic", description: "项目基础信息",
+                    fields: ["project_name", "completion_rate"]
+                }]
+            };
+
+            try {
+                const templateId = name.toLowerCase().replace(/\s+/g, '_');
+                const response = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0", id: 3, method: "tools/call",
+                        params: { name: "save_report_template", arguments: { template_id: templateId, template_data: templateData } }
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error('服务器响应异常: ' + response.status);
+                }
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error.message || '后端返回错误');
+                }
+                if (data.result) {
+                    showStatus('模板保存成功', 'success');
+                    loadTemplates();
+                } else {
+                    showStatus('模板保存失败', 'error');
+                }
+            } catch (error) {
+                showStatus('模板保存失败: ' + error.message, 'error');
+            }
+        }
+
+        function newTemplate() {
+            currentTemplateId = null;
+            document.getElementById('templateName').value = '';
+            document.getElementById('templateType').value = 'weekly';
+            document.getElementById('templateDescription').value = '';
+            document.getElementById('reportTitle').value = '{{project_name}} 报告 ({{start_date}} - {{end_date}})';
+            document.getElementById('previewArea').textContent = '新建模板，填写信息后点击"生成预览"查看效果...';
+            document.querySelectorAll('.template-item').forEach(item => item.classList.remove('active'));
+            showStatus('已创建新模板', 'success');
+        }
+
+        function downloadReport() {
+            if (!lastGeneratedMarkdown || lastGeneratedMarkdown.includes('选择一个模板')) {
+                showStatus('请先生成预览', 'error');
+                return;
+            }
+
+            const blob = new Blob([lastGeneratedMarkdown], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `report_${new Date().toISOString().split('T')[0]}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showStatus('报告已下载', 'success');
+        }
+
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.classList.remove('hidden');
+            setTimeout(() => status.classList.add('hidden'), 3000);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,233 @@
+# 简化日本式週報テンプレート（基于实际数据）
+template_info:
+  name: "简化日本式週報"
+  type: "weekly"
+  description: "基于OpenProject实际数据的简化日本式週報"
+  created_by: "team_leader"
+  version: "1.0"
+  language: "ja"
+
+# 报告标题模板
+title_template: "{{project_name}} 週報 ({{start_date}} - {{end_date}})"
+
+# 报告章节配置
+sections:
+  - section_id: "project_overview"
+    section_name: "1. プロジェクト全体進捗概要"
+    order: 1
+    required: true
+    content_template: |
+      ## 1. プロジェクト全体進捗概要
+      
+      **プロジェクト名**: {{project_name}}
+      **報告期間**: {{start_date}} - {{end_date}}
+      **全体完了率**: {{completion_rate}}%
+      **プロジェクト健康状態**: {{project_health_status}}
+      
+      ### 主要指標
+      | 項目 | 数値 | 割合 |
+      |------|------|------|
+      | 総タスク数 | {{total_work_packages}}件 | 100% |
+      | 完了タスク | {{completed_work_packages}}件 | {{(completed_work_packages/total_work_packages*100)|round(1)}}% |
+      | 進行中タスク | {{in_progress_work_packages}}件 | {{(in_progress_work_packages/total_work_packages*100)|round(1)}}% |
+      | 新規タスク | {{new_work_packages}}件 | {{(new_work_packages/total_work_packages*100)|round(1)}}% |
+      | 計画済みタスク | {{scheduled_work_packages}}件 | {{(scheduled_work_packages/total_work_packages*100)|round(1)}}% |
+      
+      ### 進捗状況評価
+      {% if completion_rate >= 70 %}
+      🟢 **良好**: プロジェクトは順調に進行中
+      {% elif completion_rate >= 30 %}
+      🟡 **要注意**: 進捗にやや遅れ、対策検討が必要
+      {% else %}
+      🔴 **要対策**: 大幅な遅れ、緊急対策が必要
+      {% endif %}
+
+  - section_id: "status_analysis"
+    section_name: "2. 作業状況分析"
+    order: 2
+    required: true
+    content_template: |
+      ## 2. 作業状況分析
+      
+      ### タスク状態分布
+      {% if status_distribution %}
+      {% for status, count in status_distribution.items() %}
+      - **{{status}}**: {{count}}件 ({{(count/total_work_packages*100)|round(1)}}%)
+      {% endfor %}
+      {% endif %}
+      
+      ### 進行状況詳細
+      #### 完了済み作業 ({{completed_work_packages}}件)
+      {% if completed_work_packages > 0 %}
+      - 計画通りに完了したタスクがあります
+      - 品質基準をクリアしています
+      {% else %}
+      - まだ完了したタスクはありません
+      - 現在は準備・実行フェーズです
+      {% endif %}
+      
+      #### 進行中作業 ({{in_progress_work_packages}}件)
+      {% if in_progress_work_packages > 0 %}
+      - {{in_progress_work_packages}}件のタスクが現在進行中
+      - 平均進捗率: 約50%
+      - 継続的な監視と支援が必要
+      {% else %}
+      - 現在進行中のタスクはありません
+      {% endif %}
+      
+      #### 新規・未着手作業 ({{new_work_packages}}件)
+      {% if new_work_packages > 0 %}
+      - {{new_work_packages}}件のタスクが未着手状態
+      - 優先度に基づく着手計画が必要
+      - リソース配分の検討が重要
+      {% else %}
+      - 全てのタスクが着手済みです
+      {% endif %}
+
+  - section_id: "weekly_activities"
+    section_name: "3. 今週の主要活動"
+    order: 3
+    required: true
+    content_template: |
+      ## 3. 今週の主要活動
+      
+      ### 実施した作業
+      - プロジェクト{{project_name}}の進捗管理
+      - {{in_progress_work_packages}}件のタスクの推進
+      - チーム連携とコミュニケーション強化
+      - 品質管理と進捗確認
+      
+      ### 成果と課題
+      #### 成果
+      {% if completion_rate > 0 %}
+      - 全体進捗率{{completion_rate}}%を達成
+      {% endif %}
+      {% if in_progress_work_packages > 0 %}
+      - {{in_progress_work_packages}}件のタスクが順調に進行
+      {% endif %}
+      - チーム体制の安定化
+      
+      #### 課題
+      {% if completion_rate < 30 %}
+      - 進捗率が{{completion_rate}}%と低い状況
+      - 作業効率の向上が必要
+      {% endif %}
+      {% if new_work_packages > total_work_packages * 0.5 %}
+      - 未着手タスクが{{new_work_packages}}件と多い
+      - 着手計画の見直しが必要
+      {% endif %}
+
+  - section_id: "next_week_plan"
+    section_name: "4. 来週の計画"
+    order: 4
+    required: true
+    content_template: |
+      ## 4. 来週の計画
+      
+      ### 重点取り組み事項
+      {% if in_progress_work_packages > 0 %}
+      1. **進行中タスクの完了推進**
+         - {{in_progress_work_packages}}件のタスクの完了を目指す
+         - 日次での進捗確認を実施
+      {% endif %}
+      
+      {% if new_work_packages > 0 %}
+      2. **新規タスクの着手**
+         - {{new_work_packages}}件の未着手タスクから優先度の高いものを開始
+         - リソース配分の最適化
+      {% endif %}
+      
+      3. **品質管理の強化**
+         - 作業品質の向上
+         - レビュー体制の充実
+      
+      ### 目標設定
+      - **進捗目標**: 全体完了率を{{completion_rate + 20}}%以上に向上
+      - **品質目標**: 全完了タスクで品質基準クリア
+      - **効率目標**: 作業効率の10%向上
+      
+      ### リソース計画
+      - **チーム体制**: {{team_member_count}}名体制を継続
+      - **作業時間**: 週40時間の標準体制
+      - **支援体制**: 必要に応じて専門家サポート
+
+  - section_id: "risk_management"
+    section_name: "5. リスクと対策"
+    order: 5
+    required: true
+    content_template: |
+      ## 5. リスクと対策
+      
+      ### 現在のリスクレベル: {{risk_level}}
+      
+      ### 主要リスク項目
+      {% if completion_rate < 30 %}
+      #### 🔴 高リスク: 進捗遅延
+      - **状況**: 完了率{{completion_rate}}%で大幅な遅れ
+      - **対策**: 
+        - 緊急対策チームの編成
+        - 作業プロセスの見直し
+        - リソース追加の検討
+      {% elif completion_rate < 70 %}
+      #### 🟡 中リスク: 進捗管理
+      - **状況**: 完了率{{completion_rate}}%でやや遅れ気味
+      - **対策**:
+        - 週次レビューの強化
+        - 作業効率の改善
+      {% else %}
+      #### 🟢 低リスク: 順調進行
+      - **状況**: 完了率{{completion_rate}}%で良好な進捗
+      - **対策**: 現状維持と継続的改善
+      {% endif %}
+      
+      {% if new_work_packages > total_work_packages * 0.6 %}
+      #### 🟡 中リスク: 未着手タスク蓄積
+      - **状況**: {{new_work_packages}}件の未着手タスク
+      - **対策**: 
+        - 優先度の再評価
+        - 並行作業の検討
+        - 着手計画の策定
+      {% endif %}
+      
+      ### 予防策
+      - 日次での進捗確認
+      - 早期の課題発見と対応
+      - チーム内コミュニケーション強化
+      - 定期的なリスク評価
+
+# データソース定義
+data_sources:
+  - name: "project_status"
+    description: "プロジェクト状態情報"
+    fields: ["project_name", "completion_rate", "project_health_status", "risk_level"]
+  - name: "task_distribution"
+    description: "タスク分布情報"
+    fields: ["total_work_packages", "completed_work_packages", "in_progress_work_packages", "new_work_packages", "scheduled_work_packages"]
+  - name: "status_breakdown"
+    description: "状態別内訳"
+    fields: ["status_distribution"]
+
+# 可編集フィールド設定
+editable_fields:
+  - field_name: "team_member_count"
+    field_type: "number"
+    field_label: "チームメンバー数"
+    default_value: 5
+    min_value: 1
+    max_value: 20
+  - field_name: "quality_target"
+    field_type: "number"
+    field_label: "品質目標 (%)"
+    default_value: 95
+    min_value: 80
+    max_value: 100
+
+# スタイル設定
+styling:
+  theme: "japanese_simple"
+  font_family: "Noto Sans JP, Arial, sans-serif"
+  primary_color: "#1e40af"
+  secondary_color: "#64748b"
+  include_charts: false
+  include_tables: true
+  date_format: "YYYY年MM月DD日"

@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   openproject:
     image: openproject/openproject:15
@@ -29,21 +31,18 @@ services:
       - OPENPROJECT_RAILS__LOG__LEVEL=debug
       - OPENPROJECT_WEB__WORKERS=1
       - OPENPROJECT_WEB__TIMEOUT=120
+    ports:
+      - "8090:80"
     volumes:
       - ./data/pgdata:/var/openproject/pgdata
       - ./data/assets:/var/openproject/assets
     restart: unless-stopped
-
-  nginx:
-    image: nginx:alpine
-    container_name: mcp-openproject-nginx
-    ports:
-      - "8090:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - openproject
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health_checks/default"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
 networks:
   default:
