@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   openproject:
     image: openproject/openproject:15
