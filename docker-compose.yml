@@ -1,6 +1,6 @@
 services:
   openproject:
-    image: openproject/openproject:15
+    image: openproject/openproject:16
     container_name: mcp-openproject
     environment:
       - OPENPROJECT_SECRET_KEY_BASE=08db74af7515f5b286e77fb9d864b6b474784e6ea326c925a757561738fd6a09c80f766283349d753f9ef4ffd91eb33cec0300b681c6c80ebe4be31d8809ee60
