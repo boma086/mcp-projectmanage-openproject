@@ -1,14 +1,14 @@
 """
-HTTP 解决方案专用配置
+HTTP 解决方案专用配置 - FastAPI 同步模式
 """
 import os
-from typing import Optional
+from typing import Optional, List
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
 
 class HTTPSolutionConfig(BaseSettings):
-    """HTTP 解决方案配置类"""
+    """HTTP 解决方案配置类 - FastAPI 同步实现"""
     
     # OpenProject 配置
     openproject_url: str = Field(
@@ -30,6 +30,12 @@ class HTTPSolutionConfig(BaseSettings):
         description="HTTP 服务器端口"
     )
     
+    # CORS 配置
+    cors_allow_origins: str = Field(
+        default="http://localhost,http://127.0.0.1",
+        description="允许的 CORS 源，逗号分隔"
+    )
+    
     # 日志配置
     log_level: str = Field(
         default="INFO",
@@ -47,6 +53,23 @@ class HTTPSolutionConfig(BaseSettings):
         default=300,
         description="缓存过期时间（秒）"
     )
+    
+    # 请求超时配置
+    request_timeout: int = Field(
+        default=30,
+        description="HTTP 请求超时时间（秒）"
+    )
+    
+    # 最大连接数
+    max_connections: int = Field(
+        default=100,
+        description="最大并发连接数"
+    )
+    
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """获取 CORS 源列表"""
+        return [origin.strip() for origin in self.cors_allow_origins.split(",") if origin.strip()]
     
     class Config:
         env_file = ".env"
@@ -72,3 +95,9 @@ def set_http_config(config: HTTPSolutionConfig) -> None:
     """设置 HTTP 解决方案配置实例"""
     global _http_config_instance
     _http_config_instance = config
+
+
+def reset_http_config() -> None:
+    """重置配置实例（主要用于测试）"""
+    global _http_config_instance
+    _http_config_instance = None
