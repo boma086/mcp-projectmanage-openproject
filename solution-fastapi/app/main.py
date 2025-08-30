@@ -1,7 +1,10 @@
+
 """
 精简的 FastAPI MCP 服务器 - 使用核心库
 """
 import os
+
+# import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, FileResponse
@@ -302,7 +305,7 @@ if __name__ == "__main__":
     logger.info(f"  - Web 界面: http://localhost:{port}/web/template_editor.html")
     
     uvicorn.run(
-        "main:app",
+        "app.main:app",
         host="0.0.0.0",
         port=port,
         reload=True,

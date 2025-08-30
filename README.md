@@ -1,3 +1,38 @@
+# VS Code 调试方法
+
+本项目已提供统一的 VS Code 调试配置，所有开发者可直接在 VS Code 中点击“运行和调试”按钮进行断点调试。
+
+调试配置文件：`.vscode/launch.json`
+
+主要内容如下：
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "FastAPI Debug",
+      "type": "python",
+      "request": "launch",
+      "module": "app.main",
+      "cwd": "${workspaceFolder}/solution-fastapi",
+      "console": "integratedTerminal"
+    }
+  ]
+}
+```
+
+调试前请确保：
+
+1. 已在 `solution-fastapi` 目录下创建并激活虚拟环境：
+   ```sh
+   python -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+2. 依赖已安装，且 `mcp_core` 作为本地包被正确识别。
+3. 直接点击 VS Code 左侧“运行和调试”即可，无需手动修改代码或配置。
+
+如需自定义调试配置，请参考 `.vscode/launch.json`。
 # OpenProject MCP 服务器
 
 > 🎯 为团队领导者提供智能化的项目报告生成工具
