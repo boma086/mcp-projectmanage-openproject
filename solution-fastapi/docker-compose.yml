@@ -1,0 +1,314 @@
+version: '3.8'
+
+services:
+  # Main FastAPI MCP server with async optimizations
+  fastapi-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: "${APP_VERSION:-1.0.0}"
+        BUILD_DATE: "${BUILD_DATE}"
+        VCS_REF: "${VCS_REF}"
+    container_name: fastapi-mcp-server
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8020}:8020"
+    environment:
+      # Application configuration
+      - APP_NAME=Async OpenProject MCP Server
+      - APP_VERSION=${APP_VERSION:-1.0.0}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DEBUG=${DEBUG:-false}
+      
+      # Server configuration for high concurrency
+      - HOST=0.0.0.0
+      - PORT=8020
+      - WORKERS=${WORKERS:-4}
+      - WORKER_CONNECTIONS=${WORKER_CONNECTIONS:-1000}
+      - MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS:-1000}
+      
+      # OpenProject configuration
+      - OPENPROJECT_URL=${OPENPROJECT_URL}
+      - OPENPROJECT_API_KEY=${OPENPROJECT_API_KEY}
+      - OPENPROJECT_TIMEOUT=${OPENPROJECT_TIMEOUT:-30}
+      - OPENPROJECT_MAX_RETRIES=${OPENPROJECT_MAX_RETRIES:-3}
+      
+      # Performance optimizations
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-30}
+      - MAX_REQUEST_SIZE=${MAX_REQUEST_SIZE:-10485760}
+      - SLOW_REQUEST_THRESHOLD=${SLOW_REQUEST_THRESHOLD:-1.0}
+      
+      # Async HTTP client configuration
+      - HTTP_CLIENT_MAX_CONNECTIONS=${HTTP_CLIENT_MAX_CONNECTIONS:-100}
+      - HTTP_CLIENT_MAX_KEEPALIVE=${HTTP_CLIENT_MAX_KEEPALIVE:-50}
+      - HTTP_CLIENT_KEEPALIVE_EXPIRY=${HTTP_CLIENT_KEEPALIVE_EXPIRY:-30}
+      
+      # WebSocket configuration
+      - WEBSOCKET_ENABLED=${WEBSOCKET_ENABLED:-true}
+      - MAX_WEBSOCKET_CONNECTIONS=${MAX_WEBSOCKET_CONNECTIONS:-1000}
+      - WEBSOCKET_HEARTBEAT_INTERVAL=${WEBSOCKET_HEARTBEAT_INTERVAL:-30}
+      - WEBSOCKET_MESSAGE_MAX_SIZE=${WEBSOCKET_MESSAGE_MAX_SIZE:-1048576}
+      
+      # Caching configuration (Redis)
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CACHE_ENABLED=${CACHE_ENABLED:-true}
+      - CACHE_TTL=${CACHE_TTL:-300}
+      - CACHE_MAX_CONNECTIONS=${CACHE_MAX_CONNECTIONS:-50}
+      
+      # Logging configuration
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENABLE_ACCESS_LOG=${ENABLE_ACCESS_LOG:-true}
+      - LOG_JSON_FORMAT=${LOG_JSON_FORMAT:-false}
+      
+      # Security configuration
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - TRUSTED_HOSTS=${TRUSTED_HOSTS:-localhost,127.0.0.1}
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
+      - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
+      
+      # Monitoring configuration
+      - ENABLE_METRICS=${ENABLE_METRICS:-true}
+      - METRICS_ENDPOINT=${METRICS_ENDPOINT:-/metrics}
+      
+      # Database configuration (if needed)
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_POOL_SIZE=${DATABASE_POOL_SIZE:-20}
+      - DATABASE_MAX_OVERFLOW=${DATABASE_MAX_OVERFLOW:-10}
+    
+    volumes:
+      # Mount configuration files
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs:rw
+      - ./tmp:/app/tmp:rw
+      
+      # Mount shared web assets if available
+      - ../shared-web:/app/shared-web:ro
+    
+    networks:
+      - mcp-network
+      - openproject-network
+    
+    depends_on:
+      redis:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Resource limits for production deployment
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    
+    # Security context
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=100M
+      - /app/tmp:rw,size=100M
+
+  # Redis for async caching and session storage
+  redis:
+    image: redis:7-alpine
+    container_name: fastapi-mcp-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+      --appendonly yes
+      --appendfsync everysec
+      --tcp-keepalive 300
+      --timeout 0
+      --tcp-backlog 511
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fastapi-mcp-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - mcp-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Grafana for metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: fastapi-mcp-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - mcp-network
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Nginx for load balancing and SSL termination (production)
+  nginx:
+    image: nginx:alpine
+    container_name: fastapi-mcp-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/ssl/certs:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - mcp-network
+    depends_on:
+      - fastapi-mcp
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    profiles:
+      - production
+
+# Network configuration for service communication
+networks:
+  mcp-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  
+  # External network for OpenProject connectivity
+  openproject-network:
+    external: true
+    name: openproject_default
+
+# Volume configuration for data persistence
+volumes:
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  nginx_logs:
+    driver: local
+
+# Configuration for different deployment profiles
+profiles:
+  # Development profile with debugging enabled
+  development:
+    services:
+      fastapi-mcp:
+        environment:
+          - ENVIRONMENT=development
+          - DEBUG=true
+          - LOG_LEVEL=DEBUG
+          - WORKERS=1
+        volumes:
+          - .:/app:rw  # Enable hot reload
+        command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020", "--reload"]
+
+  # Production profile with optimizations
+  production:
+    services:
+      fastapi-mcp:
+        environment:
+          - ENVIRONMENT=production
+          - DEBUG=false
+          - LOG_LEVEL=INFO
+          - WORKERS=4
+        read_only: true
+        security_opt:
+          - no-new-privileges:true
+
+  # Testing profile for CI/CD
+  testing:
+    services:
+      fastapi-mcp:
+        environment:
+          - ENVIRONMENT=testing
+          - DEBUG=false
+          - LOG_LEVEL=WARNING
+          - WORKERS=1
+        ports:
+          - "8020"  # Random port assignment

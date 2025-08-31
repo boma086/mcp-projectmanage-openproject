@@ -1,0 +1,50 @@
+# Prometheus configuration for FastAPI MCP server monitoring
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'fastapi-mcp-monitor'
+    environment: '${ENVIRONMENT:-development}'
+
+# Scrape configuration for FastAPI MCP server
+scrape_configs:
+  # FastAPI application metrics
+  - job_name: 'fastapi-mcp'
+    static_configs:
+      - targets: ['fastapi-mcp:8020']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    scheme: http
+    params:
+      format: ['prometheus']
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+
+  # Redis metrics (if redis_exporter is available)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+    metrics_path: '/metrics'
+    
+  # Node exporter for system metrics (optional)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+
+# Alerting rules for production monitoring
+rule_files:
+  - "alert_rules.yml"
+
+# Alert manager configuration (for production)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
