@@ -20,8 +20,11 @@ from dotenv import load_dotenv
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
-from adapters.openproject_adapter import HTTPOpenProjectClient
 from config import get_http_config, HTTPSolutionConfig
+from dependencies import (
+    get_openproject_adapter, get_mcp_handler, validate_openproject_connection,
+    cleanup_dependencies, SyncAsyncAdapter
+)
 
 # 导入核心库
 from mcp_core import (
@@ -32,13 +35,9 @@ from mcp_core import (
 # 加载环境变量
 load_dotenv()
 
-# 全局配置和服务实例
+# 全局配置
 http_config = get_http_config()
 logger = get_logger("mcp.http")
-openproject_client: Optional[HTTPOpenProjectClient] = None
-mcp_handler: Optional[MCPHandler] = None
-_services_initialized = False
-_init_lock = threading.Lock()
 
 
 def initialize_core_config():
@@ -59,67 +58,18 @@ def initialize_core_config():
         raise MCPError(f"Failed to initialize core config: {e}")
 
 
-def initialize_services():
-    """线程安全的服务初始化（同步模式）"""
-    global openproject_client, mcp_handler, _services_initialized
-    
-    with _init_lock:
-        if not _services_initialized:
-            try:
-                logger.info("初始化 HTTP MCP 服务...")
-                
-                # 创建 OpenProject 客户端
-                openproject_client = HTTPOpenProjectClient()
-                
-                # 初始化客户端（同步调用异步方法）
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(openproject_client.initialize())
-                finally:
-                    loop.close()
-                
-                # 创建 MCP 处理器
-                mcp_handler = MCPHandler(openproject_client)
-                
-                _services_initialized = True
-                logger.info("HTTP MCP 服务初始化成功")
-                
-            except Exception as e:
-                logger.error(f"服务初始化失败: {e}")
-                raise
-
-
-def cleanup_services():
-    """清理服务资源"""
-    global openproject_client
-    
-    if openproject_client:
-        try:
-            # 同步调用异步清理方法
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(openproject_client.cleanup())
-            finally:
-                loop.close()
-            logger.info("服务资源清理完成")
-        except Exception as e:
-            logger.error(f"清理服务资源时出错: {e}")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时初始化
+    logger.info("启动 HTTP MCP 服务...")
     initialize_core_config()
-    initialize_services()
     
     yield
     
     # 关闭时清理
     logger.info("清理 HTTP MCP 服务...")
-    cleanup_services()
+    cleanup_dependencies()
 
 
 # 创建 FastAPI 应用
@@ -181,21 +131,22 @@ async def root():
 async def health_check():
     """健康检查端点"""
     try:
-        # 检查服务状态
+        # 尝试获取服务实例来检查状态
         services_status = {
-            "mcp_handler": "ready" if mcp_handler else "not_ready",
+            "mcp_handler": "not_ready",
             "openproject": "disconnected"
         }
         
-        # 检查 OpenProject 连接（同步调用）
-        if openproject_client:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                connection_ok = loop.run_until_complete(openproject_client.check_connection())
-                services_status["openproject"] = "connected" if connection_ok else "disconnected"
-            finally:
-                loop.close()
+        try:
+            # 尝试获取适配器并检查连接
+            from dependencies import get_openproject_adapter as _get_adapter
+            adapter = _get_adapter()
+            connection_ok = adapter.check_connection()
+            services_status["openproject"] = "connected" if connection_ok else "disconnected"
+            services_status["mcp_handler"] = "ready"
+        except Exception as adapter_error:
+            logger.warning(f"适配器检查失败: {adapter_error}")
+            services_status["openproject"] = "error"
         
         overall_status = "healthy" if all(
             status in ["ready", "connected"] for status in services_status.values()
@@ -217,27 +168,19 @@ async def health_check():
 
 
 @app.post("/mcp")
-async def handle_mcp_request(request: Request):
+async def handle_mcp_request(
+    request: Request,
+    mcp_handler: MCPHandler = Depends(get_mcp_handler)
+):
     """处理 MCP 请求 - 主要 API 端点"""
+    request_data = None
     try:
-        # 确保服务已初始化
-        if not _services_initialized:
-            raise HTTPException(status_code=503, detail="Service not initialized")
-        
-        if not mcp_handler:
-            raise HTTPException(status_code=503, detail="MCP handler not available")
-        
         # 读取请求体
         request_data = await request.json()
         logger.info(f"收到 MCP 请求: {request_data.get('method', 'unknown')}")
         
-        # 使用核心库的 MCP 处理器（同步调用异步方法）
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            response = loop.run_until_complete(mcp_handler.handle_request(request_data))
-        finally:
-            loop.close()
+        # 使用核心库的 MCP 处理器（使用依赖注入）
+        response = await mcp_handler.handle_request(request_data)
         
         return JSONResponse(content=response)
         
@@ -247,7 +190,7 @@ async def handle_mcp_request(request: Request):
         # 返回 JSON-RPC 错误响应
         error_response = {
             "jsonrpc": "2.0",
-            "id": request_data.get("id") if "request_data" in locals() else None,
+            "id": request_data.get("id") if request_data else None,
             "error": {
                 "code": -32603,
                 "message": "Internal error",
@@ -258,19 +201,12 @@ async def handle_mcp_request(request: Request):
 
 
 @app.get("/api/projects")
-async def get_projects():
+async def get_projects(
+    adapter: SyncAsyncAdapter = Depends(validate_openproject_connection)
+):
     """获取项目列表 - REST API 端点"""
     try:
-        if not openproject_client:
-            raise HTTPException(status_code=503, detail="OpenProject client not available")
-        
-        # 同步调用异步方法
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            projects = loop.run_until_complete(openproject_client.get_projects())
-        finally:
-            loop.close()
+        projects = adapter.get_projects()
         
         return [
             {
@@ -291,21 +227,13 @@ async def get_projects():
 
 
 @app.get("/api/projects/{project_id}/work_packages")
-async def get_work_packages(project_id: str):
+async def get_work_packages(
+    project_id: str,
+    adapter: SyncAsyncAdapter = Depends(validate_openproject_connection)
+):
     """获取项目工作包列表 - REST API 端点"""
     try:
-        if not openproject_client:
-            raise HTTPException(status_code=503, detail="OpenProject client not available")
-        
-        # 同步调用异步方法
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            work_packages = loop.run_until_complete(
-                openproject_client.get_work_packages(project_id)
-            )
-        finally:
-            loop.close()
+        work_packages = adapter.get_work_packages(project_id)
         
         return [
             {
