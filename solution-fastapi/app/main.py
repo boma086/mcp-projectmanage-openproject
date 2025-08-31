@@ -50,9 +50,7 @@ except Exception as e:
     raise MCPError(f"Failed to initialize core config: {e}")
 
 # Global service instances with proper typing
-openproject_client: Optional[AsyncOpenProjectClient] = None
 mcp_handler: Optional[MCPHandler] = None
-httpx_client: Optional[httpx.AsyncClient] = None
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -88,25 +86,17 @@ connection_manager = ConnectionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle management with async resource initialization"""
-    global openproject_client, mcp_handler, httpx_client
+    global mcp_handler
+    
+    # Import dependencies here to avoid circular imports
+    from app.dependencies import get_openproject_client, close_http_client_pool
     
     # Startup initialization
     try:
         logger.info("Initializing FastAPI MCP Server with async optimizations...")
         
-        # Create HTTP client with connection pooling for external calls
-        httpx_client = httpx.AsyncClient(
-            limits=httpx.Limits(
-                max_keepalive_connections=50,
-                max_connections=100,
-                keepalive_expiry=30
-            ),
-            timeout=httpx.Timeout(30.0, connect=10.0)
-        )
-        
-        # Create async OpenProject client with connection pooling
-        openproject_client = AsyncOpenProjectClient()
-        await openproject_client.initialize()
+        # Initialize OpenProject client using dependency injection
+        openproject_client = await get_openproject_client()
         
         # Create MCP handler with async support
         mcp_handler = MCPHandler(openproject_client)
@@ -128,13 +118,8 @@ async def lifespan(app: FastAPI):
         # Cleanup on shutdown
         logger.info("Shutting down FastAPI MCP Server...")
         
-        # Close HTTP client
-        if httpx_client:
-            await httpx_client.aclose()
-        
-        # Cleanup OpenProject client
-        if openproject_client:
-            await openproject_client.cleanup()
+        # Close HTTP client pool and cleanup resources
+        await close_http_client_pool()
         
         logger.info("Application shutdown complete")
 
@@ -272,8 +257,8 @@ async def health_check():
             except Exception as e:
                 openproject_status = f"error: {str(e)[:100]}"
         
-        # Check HTTP client
-        http_client_status = "ready" if httpx_client and not httpx_client.is_closed else "not_ready"
+        # Check HTTP client status (now managed by dependency injection)
+        http_client_status = "managed_by_di"
         
         # Calculate total health check time
         total_time = time.time() - start_time
@@ -433,8 +418,8 @@ async def get_metrics():
     """Get performance metrics for monitoring"""
     return {
         "websocket_connections": len(connection_manager.active_connections),
-        "http_client_status": "ready" if httpx_client and not httpx_client.is_closed else "not_ready",
-        "openproject_status": "ready" if openproject_client else "not_ready",
+        "http_client_status": "managed_by_di",
+        "openproject_status": "ready" if mcp_handler else "not_ready",
         "mcp_handler_status": "ready" if mcp_handler else "not_ready",
         "server_info": {
             "name": settings.app_name,
