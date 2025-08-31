@@ -3,7 +3,7 @@ issue: 5
 stream: async-openproject-adapter
 agent: backend-developer
 started: 2025-08-31T04:42:04Z
-status: in_progress
+status: completed
 ---
 
 # Stream B: Async OpenProject Adapter
