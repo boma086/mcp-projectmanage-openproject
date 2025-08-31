@@ -25,6 +25,7 @@ from dependencies import (
     get_openproject_adapter, get_mcp_handler, validate_openproject_connection,
     cleanup_dependencies, SyncAsyncAdapter
 )
+from routers import projects_router, work_packages_router, users_router
 
 # 导入核心库
 from mcp_core import (
@@ -101,6 +102,11 @@ app.add_middleware(
 if os.path.exists("../shared-web"):
     app.mount("/web", StaticFiles(directory="../shared-web"), name="web")
 
+# 注册路由器
+app.include_router(projects_router)
+app.include_router(work_packages_router)
+app.include_router(users_router)
+
 
 @app.get("/")
 async def root():
@@ -116,7 +122,10 @@ async def root():
             "health": "/health",
             "docs": "/docs",
             "redoc": "/redoc",
-            "openapi": "/openapi.json"
+            "openapi": "/openapi.json",
+            "projects": "/api/projects",
+            "work_packages": "/api/work-packages",
+            "users": "/api/users"
         },
         "features": [
             "Synchronous request-response pattern",
@@ -200,62 +209,6 @@ async def handle_mcp_request(
         return JSONResponse(content=error_response)
 
 
-@app.get("/api/projects")
-async def get_projects(
-    adapter: SyncAsyncAdapter = Depends(validate_openproject_connection)
-):
-    """获取项目列表 - REST API 端点"""
-    try:
-        projects = adapter.get_projects()
-        
-        return [
-            {
-                "id": project.id,
-                "name": project.name,
-                "identifier": project.identifier,
-                "description": project.description,
-                "status": project.status,
-                "created_at": project.created_at.isoformat() if project.created_at else None,
-                "updated_at": project.updated_at.isoformat() if project.updated_at else None
-            }
-            for project in projects
-        ]
-        
-    except Exception as e:
-        logger.error(f"获取项目列表失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/projects/{project_id}/work_packages")
-async def get_work_packages(
-    project_id: str,
-    adapter: SyncAsyncAdapter = Depends(validate_openproject_connection)
-):
-    """获取项目工作包列表 - REST API 端点"""
-    try:
-        work_packages = adapter.get_work_packages(project_id)
-        
-        return [
-            {
-                "id": wp.id,
-                "subject": wp.subject,
-                "description": wp.description,
-                "status": wp.status,
-                "type": wp.type,
-                "priority": wp.priority,
-                "assigned_to": wp.assigned_to,
-                "progress": wp.progress,
-                "start_date": wp.start_date.isoformat() if wp.start_date else None,
-                "due_date": wp.due_date.isoformat() if wp.due_date else None,
-                "created_at": wp.created_at.isoformat() if wp.created_at else None,
-                "updated_at": wp.updated_at.isoformat() if wp.updated_at else None
-            }
-            for wp in work_packages
-        ]
-        
-    except Exception as e:
-        logger.error(f"获取工作包列表失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # 异常处理器
@@ -302,7 +255,9 @@ def main():
     logger.info(f"  - API 文档: http://localhost:{config.port}/docs")
     logger.info(f"  - 健康检查: http://localhost:{config.port}/health")
     logger.info(f"  - MCP 端点: http://localhost:{config.port}/mcp")
-    logger.info(f"  - 项目列表: http://localhost:{config.port}/api/projects")
+    logger.info(f"  - 项目 API: http://localhost:{config.port}/api/projects")
+    logger.info(f"  - 工作包 API: http://localhost:{config.port}/api/work-packages")
+    logger.info(f"  - 用户 API: http://localhost:{config.port}/api/users")
     logger.info(f"  - Web 界面: http://localhost:{config.port}/web/template_editor.html")
     
     # 使用 uvicorn 启动（WSGI 兼容）

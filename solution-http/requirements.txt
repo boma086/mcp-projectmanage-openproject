@@ -7,6 +7,7 @@ pydantic[email]>=2.5.0
 pydantic-settings>=2.0.0
 PyYAML>=6.0.1
 Jinja2>=3.1.2
+aiohttp>=3.9.0
 
 # 测试依赖
 pytest>=7.4.3

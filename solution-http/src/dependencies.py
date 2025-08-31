@@ -85,6 +85,12 @@ class SyncAsyncAdapter:
     
     def assess_project_risks(self, project_id: str):
         return self._run_async(self.async_client.assess_project_risks(project_id))
+    
+    def create_work_package(self, work_package_data: dict):
+        return self._run_async(self.async_client.create_work_package(work_package_data))
+    
+    def update_work_package(self, work_package_id: str, work_package_data: dict):
+        return self._run_async(self.async_client.update_work_package(work_package_id, work_package_data))
 
 
 @lru_cache()
