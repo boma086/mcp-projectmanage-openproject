@@ -1,14 +1,63 @@
-# FastAPI 解决方案依赖
+# FastAPI Async Solution Dependencies
+# Core FastAPI and ASGI server
 fastapi>=0.116.0
-uvicorn>=0.35.0
+uvicorn[standard]>=0.35.0
+websockets>=13.0
+wsgiref>=0.1.2
+
+# Async HTTP client and networking
 httpx>=0.28.0
+aiofiles>=24.0.0
+aiohttp>=3.10.0
+
+# Data validation and settings
 pydantic[email]>=2.11.0
 pydantic-settings>=2.10.0
-requests>=2.31.0
 
-# 测试依赖
-pytest>=7.4.3
-pytest-asyncio>=0.21.1
+# Performance optimizations for async
+uvloop>=0.21.0  # High-performance event loop (Unix only)
+httptools>=0.6.0  # Fast HTTP parser
 
-# 核心库 - 使用相对路径
+# Async database support (optional)
+aiosqlite>=0.20.0  # Async SQLite
+aiopg>=1.4.0  # Async PostgreSQL (optional)
+
+# Async caching
+aioredis>=2.0.1  # Async Redis client
+
+# Security and middleware
+python-multipart>=0.0.9  # Form data parsing
+python-jose[cryptography]>=3.3.0  # JWT handling
+passlib[bcrypt]>=1.7.4  # Password hashing
+
+# Environment and configuration
+python-dotenv>=1.0.1
+click>=8.1.7  # CLI support
+
+# Monitoring and observability
+prometheus-client>=0.21.0  # Metrics collection
+structlog>=24.1.0  # Structured logging
+
+# Async task management (optional)
+celery[redis]>=5.3.0  # Distributed task queue
+
+# Development and testing dependencies
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+pytest-mock>=3.14.0
+pytest-cov>=6.0.0
+factory-boy>=3.3.1  # Test data generation
+httpx-ws>=0.6.0  # WebSocket testing
+
+# Code quality
+black>=24.0.0
+isort>=5.13.0
+flake8>=7.0.0
+mypy>=1.11.0
+
+# Documentation
+sphinx>=8.0.0  # Documentation generation
+sphinx-autodoc-typehints>=2.0.0
+
+# Core MCP library - using relative path
 -e ../mcp-core
