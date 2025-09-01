@@ -44,7 +44,7 @@ class TestWebSocketIsolated:
         assert "test-client" in connection_manager.active_connections
         
         # Test disconnect
-        connection_manager.disconnect("test-client")
+        await connection_manager.disconnect("test-client")
         assert len(connection_manager.active_connections) == 0
         assert "test-client" not in connection_manager.active_connections
     
@@ -61,7 +61,7 @@ class TestWebSocketIsolated:
         await connection_manager.unsubscribe("test-client", "mcp_operations")
         assert "test-client" not in connection_manager.subscriptions["mcp_operations"]
         
-        connection_manager.disconnect("test-client")
+        await connection_manager.disconnect("test-client")
     
     @pytest.mark.asyncio
     async def test_connection_manager_broadcast(self, connection_manager, mock_websocket):
@@ -75,7 +75,7 @@ class TestWebSocketIsolated:
         await connection_manager.broadcast({"type": "test_message", "content": "test"})
         mock_websocket.send_text.assert_called_once()
         
-        connection_manager.disconnect("test-client")
+        await connection_manager.disconnect("test-client")
     
     @pytest.mark.asyncio
     async def test_notification_service_send_notification(self, notification_service):
