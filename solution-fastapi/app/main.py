@@ -1,4 +1,3 @@
-
 """
 Async FastAPI MCP Server with Full Async Support
 
@@ -12,6 +11,9 @@ This module implements a high-performance async FastAPI application with:
 import os
 import time
 import asyncio
+import json
+import uuid
+import hashlib
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect
@@ -25,6 +27,8 @@ from starlette.responses import Response
 import httpx
 from app.adapters.async_openproject_adapter import AsyncOpenProjectClient
 from app.core.config import get_settings, Settings
+from app.core.connection_pool import initialize_connection_pools, close_connection_pools, get_connection_pool_manager
+from app.middleware.performance import add_performance_middleware, AsyncPerformanceMiddleware
 from dotenv import load_dotenv
 
 # 导入核心库
@@ -52,35 +56,9 @@ except Exception as e:
 # Global service instances with proper typing
 mcp_handler: Optional[MCPHandler] = None
 
-# WebSocket connection manager
-class ConnectionManager:
-    """Manages WebSocket connections for real-time updates"""
-    
-    def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
-    
-    async def connect(self, websocket: WebSocket, client_id: str):
-        await websocket.accept()
-        self.active_connections[client_id] = websocket
-        logger.info(f"WebSocket client {client_id} connected")
-    
-    def disconnect(self, client_id: str):
-        if client_id in self.active_connections:
-            del self.active_connections[client_id]
-            logger.info(f"WebSocket client {client_id} disconnected")
-    
-    async def send_personal_message(self, message: str, client_id: str):
-        if client_id in self.active_connections:
-            await self.active_connections[client_id].send_text(message)
-    
-    async def broadcast(self, message: str):
-        for connection in self.active_connections.values():
-            try:
-                await connection.send_text(message)
-            except Exception as e:
-                logger.error(f"Failed to send broadcast message: {e}")
-
-connection_manager = ConnectionManager()
+# Import WebSocket modules
+from app.websockets.manager import connection_manager
+from app.websockets.notifications import notification_service
 
 
 @asynccontextmanager
@@ -95,16 +73,32 @@ async def lifespan(app: FastAPI):
     try:
         logger.info("Initializing FastAPI MCP Server with async optimizations...")
         
+        # Initialize connection pools first
+        await initialize_connection_pools()
+        logger.info("Connection pools initialized successfully")
+        
         # Initialize OpenProject client using dependency injection
         openproject_client = await get_openproject_client()
         
         # Create MCP handler with async support
         mcp_handler = MCPHandler(openproject_client)
         
+        # Start WebSocket connection manager
+        if settings.websocket_enabled:
+            await connection_manager.start()
+            logger.info("WebSocket connection manager started")
+        
         # Perform health check to ensure all services are ready
         connection_ok = await openproject_client.check_connection()
         if not connection_ok:
             logger.warning("OpenProject connection check failed during startup")
+        
+        # Check connection pool health
+        pool_manager = get_connection_pool_manager()
+        pool_health = await pool_manager.health_check_all()
+        for pool_type, is_healthy in pool_health.items():
+            status = "healthy" if is_healthy else "unhealthy"
+            logger.info(f"Connection pool {pool_type.value}: {status}")
         
         logger.info("FastAPI MCP Server initialized successfully")
         logger.info(f"Server running with {settings.app_name} v{settings.app_version}")
@@ -118,22 +112,20 @@ async def lifespan(app: FastAPI):
         # Cleanup on shutdown
         logger.info("Shutting down FastAPI MCP Server...")
         
-        # Close HTTP client pool and cleanup resources
+        # Stop WebSocket connection manager
+        if settings.websocket_enabled:
+            await connection_manager.stop()
+            logger.info("WebSocket connection manager stopped")
+        
+        # Close connection pools and cleanup resources
+        await close_connection_pools()
+        logger.info("Connection pools closed")
+        
+        # Close HTTP client pool
         await close_http_client_pool()
         
         logger.info("Application shutdown complete")
 
-
-# Create FastAPI application with async optimizations
-app = FastAPI(
-    title=settings.app_name,
-    description="High-performance async FastAPI MCP OpenProject server with WebSocket support",
-    version=settings.app_version,
-    lifespan=lifespan,
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None,
-    openapi_url="/openapi.json" if settings.debug else None
-)
 
 # Async middleware for request timing and logging
 class AsyncRequestTimingMiddleware(BaseHTTPMiddleware):
@@ -170,6 +162,21 @@ class AsyncRequestTimingMiddleware(BaseHTTPMiddleware):
             )
             raise
 
+
+# Create FastAPI application with async optimizations
+app = FastAPI(
+    title=settings.app_name,
+    description="High-performance async FastAPI MCP OpenProject server with WebSocket support",
+    version=settings.app_version,
+    lifespan=lifespan,
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+    openapi_url="/openapi.json" if settings.debug else None
+)
+
+# Add comprehensive performance middleware
+add_performance_middleware(app, settings)
+
 # Add security middleware
 if not settings.debug:
     app.add_middleware(
@@ -187,7 +194,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Process-Time", "X-Request-ID"]
+    expose_headers=["X-Process-Time", "X-Request-ID", "X-RateLimit-Limit", 
+                   "X-RateLimit-Remaining", "X-RateLimit-Reset"]
 )
 
 # Mount static files (from shared web directory)
@@ -206,10 +214,18 @@ def get_app_settings() -> Settings:
     """Dependency to get application settings"""
     return settings
 
+# Dependency for getting connection pool manager
+async def get_connection_pool_manager_dep():
+    """Dependency to get connection pool manager"""
+    return get_connection_pool_manager()
+
 
 @app.get("/")
 async def root(settings: Settings = Depends(get_app_settings)):
     """Root endpoint - returns async service information"""
+    pool_manager = get_connection_pool_manager()
+    pool_stats = pool_manager.get_all_stats()
+    
     return {
         "name": settings.app_name,
         "version": settings.app_version,
@@ -220,11 +236,21 @@ async def root(settings: Settings = Depends(get_app_settings)):
             "websockets": True,
             "connection_pooling": True,
             "async_middleware": True,
-            "performance_monitoring": True
+            "performance_monitoring": True,
+            "rate_limiting": settings.rate_limit_enabled,
+            "caching": settings.cache_enabled
+        },
+        "connection_pools": {
+            pool_type.value: {
+                "total_connections": stats.total_connections,
+                "active_connections": stats.active_connections,
+                "max_connections": stats.max_connections
+            } for pool_type, stats in pool_stats.items()
         },
         "endpoints": {
             "mcp": "/mcp",
             "health": "/health",
+            "performance": "/performance",
             "websocket": "/ws/{client_id}",
             "docs": "/docs" if settings.debug else "disabled",
             "openapi": "/openapi.json" if settings.debug else "disabled"
@@ -260,11 +286,19 @@ async def health_check():
         # Check HTTP client status (now managed by dependency injection)
         http_client_status = "managed_by_di"
         
+        # Check connection pool health
+        pool_manager = get_connection_pool_manager()
+        pool_health = await pool_manager.health_check_all()
+        pool_statuses = {}
+        for pool_type, is_healthy in pool_health.items():
+            pool_statuses[pool_type.value] = "healthy" if is_healthy else "unhealthy"
+        
         # Calculate total health check time
         total_time = time.time() - start_time
         
         health_data = {
-            "status": "healthy" if openproject_status == "connected" else "degraded",
+            "status": "healthy" if (openproject_status == "connected" and 
+                                  all(status == "healthy" for status in pool_statuses.values())) else "degraded",
             "timestamp": time.time(),
             "check_duration_ms": round(total_time * 1000, 2),
             "services": {
@@ -276,9 +310,12 @@ async def health_check():
                 "http_client": http_client_status,
                 "websocket_connections": len(connection_manager.active_connections)
             },
+            "connection_pools": pool_statuses,
             "performance": {
                 "async_support": True,
-                "connection_pooling": True
+                "connection_pooling": True,
+                "caching": settings.cache_enabled,
+                "rate_limiting": settings.rate_limit_enabled
             }
         }
         
@@ -296,6 +333,61 @@ async def health_check():
             },
             status_code=500
         )
+
+
+@app.get("/performance")
+async def performance_stats():
+    """Get comprehensive performance statistics"""
+    pool_manager = get_connection_pool_manager()
+    pool_stats = pool_manager.get_all_stats()
+    
+    websocket_stats = connection_manager.get_connection_stats()
+    
+    return {
+        "connection_pools": {
+            pool_type.value: {
+                "total_connections": stats.total_connections,
+                "active_connections": stats.active_connections,
+                "idle_connections": stats.idle_connections,
+                "max_connections": stats.max_connections,
+                "total_requests": stats.total_requests,
+                "successful_requests": stats.successful_requests,
+                "failed_requests": stats.failed_requests,
+                "avg_response_time_ms": stats.avg_response_time_ms,
+                "p95_response_time_ms": stats.p95_response_time_ms,
+                "p99_response_time_ms": stats.p99_response_time_ms
+            } for pool_type, stats in pool_stats.items()
+        },
+        "websocket": {
+            **websocket_stats,
+            "enabled": settings.websocket_enabled,
+            "max_connections": settings.max_websocket_connections,
+            "heartbeat_interval": settings.websocket_heartbeat_interval
+        },
+        "http_client": {
+            "status": "managed_by_di",
+            "max_connections": settings.http_client_max_connections,
+            "timeout": settings.http_client_timeout
+        },
+        "services": {
+            "openproject": "ready" if mcp_handler else "not_ready",
+            "mcp_handler": "ready" if mcp_handler else "not_ready",
+            "websocket_manager": "running" if settings.websocket_enabled else "disabled"
+        },
+        "server_info": {
+            "name": settings.app_name,
+            "version": settings.app_version,
+            "debug": settings.debug,
+            "environment": settings.environment
+        },
+        "performance_limits": {
+            "max_concurrent_requests": settings.max_concurrent_requests,
+            "request_timeout": settings.request_timeout,
+            "max_request_size": settings.max_request_size,
+            "rate_limit_requests": settings.rate_limit_requests,
+            "rate_limit_window": settings.rate_limit_window
+        }
+    }
 
 
 @app.post("/mcp")
@@ -333,10 +425,16 @@ async def handle_mcp_request(
             timeout=settings.request_timeout
         )
         
-        # Broadcast update to WebSocket clients if applicable
+        # Send real-time notification for MCP operations
         if request_data.get("method") in ["tools/call", "resources/read"]:
-            await connection_manager.broadcast(
-                f"MCP operation completed: {request_data.get('method')}"
+            operation_id = request_data.get("id", str(uuid.uuid4()))
+            await notification_service.notify_mcp_operation(
+                operation_type="mcp_request",
+                operation_id=operation_id,
+                method=request_data.get("method"),
+                params=request_data.get("params"),
+                result=response if isinstance(response, dict) else None,
+                duration_ms=(time.time() - start_time) * 1000
             )
         
         return JSONResponse(content=response)
@@ -373,60 +471,120 @@ async def handle_mcp_request(
         return JSONResponse(content=error_response, status_code=500)
 
 
-# WebSocket endpoint for real-time updates
+# WebSocket endpoint for real-time updates and notifications
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
-    """WebSocket endpoint for real-time updates and notifications"""
-    await connection_manager.connect(websocket, client_id)
-    
+    """
+    WebSocket endpoint for real-time MCP operations, notifications, and live data streaming.
+    Supports subscription-based messaging and connection lifecycle management.
+    """
     try:
-        # Send welcome message
-        await websocket.send_json({
-            "type": "connection",
-            "message": f"Connected to MCP server as {client_id}",
-            "timestamp": time.time()
-        })
+        # Connect and initialize client
+        actual_client_id = await connection_manager.connect(websocket, client_id)
         
+        # Notify about new connection
+        await notification_service.notify_connection_status(
+            actual_client_id, 
+            "connected",
+            {"connection_count": len(connection_manager.active_connections)}
+        )
+        
+        # Main message processing loop
         while True:
             try:
-                # Wait for messages from client
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+                # Wait for messages from client with timeout for heartbeat
+                data = await asyncio.wait_for(
+                    websocket.receive_text(), 
+                    timeout=settings.websocket_heartbeat_interval
+                )
                 
-                # Echo back or process the message
-                await websocket.send_json({
-                    "type": "echo",
-                    "message": f"Received: {data}",
-                    "timestamp": time.time()
-                })
+                # Process client message
+                await _process_websocket_message(data, actual_client_id)
                 
             except asyncio.TimeoutError:
-                # Send ping to keep connection alive
-                await websocket.send_json({
-                    "type": "ping",
-                    "timestamp": time.time()
-                })
+                # Connection is alive, continue waiting
+                continue
                 
     except WebSocketDisconnect:
-        connection_manager.disconnect(client_id)
+        # Handle graceful disconnect
+        connection_manager.disconnect(actual_client_id)
+        await notification_service.notify_connection_status(
+            actual_client_id, 
+            "disconnected",
+            {"reason": "client_disconnect"}
+        )
+        
     except Exception as e:
-        logger.error(f"WebSocket error for client {client_id}: {e}")
-        connection_manager.disconnect(client_id)
+        # Handle unexpected errors
+        logger.error(f"WebSocket error for client {actual_client_id}: {e}")
+        connection_manager.disconnect(actual_client_id)
+        await notification_service.notify_connection_status(
+            actual_client_id, 
+            "disconnected", 
+            {"reason": "error", "error": str(e)}
+        )
 
-# Performance monitoring endpoint
-@app.get("/metrics")
-async def get_metrics():
-    """Get performance metrics for monitoring"""
-    return {
-        "websocket_connections": len(connection_manager.active_connections),
-        "http_client_status": "managed_by_di",
-        "openproject_status": "ready" if mcp_handler else "not_ready",
-        "mcp_handler_status": "ready" if mcp_handler else "not_ready",
-        "server_info": {
-            "name": settings.app_name,
-            "version": settings.app_version,
-            "debug": settings.debug
-        }
-    }
+
+async def _process_websocket_message(data: str, client_id: str):
+    """Process incoming WebSocket messages from clients"""
+    try:
+        message = json.loads(data)
+        message_type = message.get("type")
+        
+        if message_type == "subscribe":
+            # Handle subscription requests
+            subscription_type = message.get("subscription")
+            if subscription_type:
+                await connection_manager.subscribe(client_id, subscription_type)
+                
+        elif message_type == "unsubscribe":
+            # Handle unsubscription requests
+            subscription_type = message.get("subscription")
+            if subscription_type:
+                await connection_manager.unsubscribe(client_id, subscription_type)
+                
+        elif message_type == "ping":
+            # Respond to ping requests
+            await connection_manager.send_personal_message({
+                "type": "pong",
+                "timestamp": time.time(),
+                "client_id": client_id
+            }, client_id)
+            
+        elif message_type == "get_metrics":
+            # Provide connection metrics to client
+            metrics = connection_manager.get_connection_metrics(client_id)
+            await connection_manager.send_personal_message({
+                "type": "metrics",
+                "client_metrics": metrics,
+                "timestamp": time.time()
+            }, client_id)
+            
+        else:
+            # Echo unknown message types
+            await connection_manager.send_personal_message({
+                "type": "echo",
+                "message": f"Received: {data}",
+                "timestamp": time.time()
+            }, client_id)
+            
+    except json.JSONDecodeError:
+        # Handle invalid JSON
+        await connection_manager.send_personal_message({
+            "type": "error",
+            "message": "Invalid JSON message",
+            "timestamp": time.time()
+        }, client_id)
+        
+    except Exception as e:
+        # Handle processing errors
+        logger.error(f"Failed to process WebSocket message from {client_id}: {e}")
+        await connection_manager.send_personal_message({
+            "type": "error",
+            "message": f"Message processing failed: {str(e)}",
+            "timestamp": time.time()
+        }, client_id)
+
 
 # Exception handlers with async support
 @app.exception_handler(MCPError)
@@ -492,8 +650,8 @@ if __name__ == "__main__":
     logger.info(f"Available endpoints:")
     logger.info(f"  - API docs: http://{settings.host}:{settings.port}/docs")
     logger.info(f"  - Health check: http://{settings.host}:{settings.port}/health")
+    logger.info(f"  - Performance stats: http://{settings.host}:{settings.port}/performance")
     logger.info(f"  - MCP endpoint: http://{settings.host}:{settings.port}/mcp")
-    logger.info(f"  - Metrics: http://{settings.host}:{settings.port}/metrics")
     logger.info(f"  - WebSocket: ws://{settings.host}:{settings.port}/ws/{{client_id}}")
     if os.path.exists("../shared-web"):
         logger.info(f"  - Web interface: http://{settings.host}:{settings.port}/web/template_editor.html")

@@ -1,3 +1,4 @@
+
 # FastAPI MCP 解决方案 ✅ (已实现)
 
 这是一个基于 FastAPI 框架实现的 MCP (Model Context Protocol) 解决方案，提供高性能的异步项目管理服务。
@@ -39,6 +40,7 @@ cp .env.example .env
 ```bash
 直接使用 uvicorn
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
 ```
 
 ### 4. 访问服务
@@ -80,10 +82,27 @@ curl -X POST http://localhost:8000/mcp \
       "arguments": {
         "project_id": "2",
         "start_date": "2025-08-18",
-        "end_date": "2025-08-24"
+        "end_date": "2025-08-29"
       }
     }
   }'
+
+curl -X POST http://localhost:8000/mcp \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "tools/call",
+          "params": {
+            "name": "generate_enhanced_weekly_report",
+            "arguments": {
+              "project_id": "2",
+              "start_date": "2025-08-18",
+              "end_date": "2025-08-29",
+              "language": "zh"
+            }
+          }
+        }'
 ```
 
 ### REST API 调用

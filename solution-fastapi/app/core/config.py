@@ -7,7 +7,8 @@ MCP server with support for environment variables, validation, and async operati
 import os
 import asyncio
 from typing import Optional, List, Dict, Any
-from pydantic import BaseSettings, Field, validator
+from pydantic_settings import BaseSettings
+from pydantic import Field, validator
 from functools import lru_cache
 
 
