@@ -20,43 +20,6 @@ class MCPToolManager:
         """列出所有可用工具"""
         tools = [
             {
-                "name": "get_projects",
-                "description": "获取所有项目列表",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "name": "get_project",
-                "description": "获取指定项目的详细信息",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "project_id": {
-                            "type": "string",
-                            "description": "项目 ID"
-                        }
-                    },
-                    "required": ["project_id"]
-                }
-            },
-            {
-                "name": "get_work_packages",
-                "description": "获取工作包列表",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "project_id": {
-                            "type": "string",
-                            "description": "项目 ID（可选）"
-                        }
-                    },
-                    "required": []
-                }
-            },
-            {
                 "name": "generate_weekly_report",
                 "description": "生成项目周报",
                 "inputSchema": {
@@ -162,6 +125,60 @@ class MCPToolManager:
                     },
                     "required": ["template_id", "project_id"]
                 }
+            },
+            {
+                "name": "generate_enhanced_weekly_report",
+                "description": "生成增强型项目周报（支持多语言和详细指标）",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {
+                            "type": "string",
+                            "description": "项目 ID"
+                        },
+                        "start_date": {
+                            "type": "string",
+                            "description": "开始日期 (YYYY-MM-DD)"
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "结束日期 (YYYY-MM-DD)"
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "报告语言 (zh/ja/en)",
+                            "enum": ["zh", "ja", "en"]
+                        }
+                    },
+                    "required": ["project_id", "start_date", "end_date"]
+                }
+            },
+            {
+                "name": "generate_enhanced_monthly_report",
+                "description": "生成增强型项目月报（支持多语言和详细指标）",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {
+                            "type": "string",
+                            "description": "项目 ID"
+                        },
+                        "year": {
+                            "type": "integer",
+                            "description": "年份"
+                        },
+                        "month": {
+                            "type": "integer",
+                            "description": "月份 (1-12)"
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "报告语言 (zh/ja/en)",
+                            "enum": ["zh", "ja", "en"]
+                        }
+                    },
+                    "required": ["project_id", "year", "month"]
+                }
             }
         ]
         
@@ -178,13 +195,7 @@ class MCPToolManager:
         self.logger.info(f"Calling tool: {tool_name}")
         
         try:
-            if tool_name == "get_projects":
-                return await self._get_projects(arguments)
-            elif tool_name == "get_project":
-                return await self._get_project(arguments)
-            elif tool_name == "get_work_packages":
-                return await self._get_work_packages(arguments)
-            elif tool_name == "generate_weekly_report":
+            if tool_name == "generate_weekly_report":
                 return await self._generate_weekly_report(arguments)
             elif tool_name == "generate_monthly_report":
                 return await self._generate_monthly_report(arguments)
@@ -196,6 +207,10 @@ class MCPToolManager:
                 return await self._save_report_template(arguments)
             elif tool_name == "generate_report_from_template":
                 return await self._generate_report_from_template(arguments)
+            elif tool_name == "generate_enhanced_weekly_report":
+                return await self._generate_enhanced_weekly_report(arguments)
+            elif tool_name == "generate_enhanced_monthly_report":
+                return await self._generate_enhanced_monthly_report(arguments)
             else:
                 raise InvalidParams(f"Unknown tool: {tool_name}")
                 
@@ -203,82 +218,6 @@ class MCPToolManager:
             self.logger.error(f"Tool {tool_name} failed", e)
             raise
     
-    async def _get_projects(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """获取项目列表"""
-        projects = await self.client.get_projects()
-        
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"找到 {len(projects)} 个项目:\n\n" + 
-                           "\n".join([f"- {p.get_display_name()}: {p.description or '无描述'}" 
-                                    for p in projects])
-                }
-            ]
-        }
-    
-    async def _get_project(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """获取项目详情"""
-        project_id = arguments.get("project_id")
-        if not project_id:
-            raise InvalidParams("Missing project_id")
-        
-        project = await self.client.get_project(project_id)
-        if not project:
-            raise NotFoundError(f"Project not found: {project_id}")
-        
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"项目详情:\n\n"
-                           f"名称: {project.name}\n"
-                           f"标识符: {project.identifier}\n"
-                           f"状态: {project.status or '未知'}\n"
-                           f"描述: {project.description or '无描述'}\n"
-                           f"创建时间: {project.created_at.strftime('%Y-%m-%d %H:%M:%S') if project.created_at else '未知'}\n"
-                           f"更新时间: {project.updated_at.strftime('%Y-%m-%d %H:%M:%S') if project.updated_at else '未知'}"
-                }
-            ]
-        }
-    
-    async def _get_work_packages(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """获取工作包列表"""
-        project_id = arguments.get("project_id")
-        work_packages = await self.client.get_work_packages(project_id)
-        
-        if not work_packages:
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "未找到工作包"
-                    }
-                ]
-            }
-        
-        text = f"找到 {len(work_packages)} 个工作包:\n\n"
-        for wp in work_packages[:10]:  # 限制显示数量
-            text += f"- {wp.subject}\n"
-            text += f"  状态: {wp.status or '未知'}\n"
-            if wp.assigned_to:
-                text += f"  负责人: {wp.assigned_to}\n"
-            if wp.progress is not None:
-                text += f"  进度: {wp.progress}%\n"
-            text += "\n"
-        
-        if len(work_packages) > 10:
-            text += f"... 还有 {len(work_packages) - 10} 个工作包"
-        
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": text
-                }
-            ]
-        }
     
     async def _generate_weekly_report(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """生成周报"""
@@ -618,3 +557,97 @@ class MCPToolManager:
                 }
             ]
         }
+    
+    async def _generate_enhanced_weekly_report(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """生成增强型周报"""
+        project_id = arguments.get("project_id")
+        start_date = arguments.get("start_date")
+        end_date = arguments.get("end_date")
+        language_str = arguments.get("language", "ja")
+        
+        if not all([project_id, start_date, end_date]):
+            raise InvalidParams("Missing required parameters: project_id, start_date, end_date")
+        
+        # 导入增强型报告生成器
+        try:
+            from app.services.enhanced_report_generator import EnhancedReportGeneratorService, ReportLanguage
+            
+            # 创建增强型报告生成器实例
+            enhanced_generator = EnhancedReportGeneratorService(self.client)
+            
+            # 解析语言参数
+            language_map = {
+                "zh": ReportLanguage.CHINESE,
+                "ja": ReportLanguage.JAPANESE,
+                "en": ReportLanguage.ENGLISH
+            }
+            language = language_map.get(language_str.lower(), ReportLanguage.JAPANESE)
+            
+            # 生成增强型报告
+            report = await enhanced_generator.generate_enhanced_weekly_report(
+                project_id, start_date, end_date, language
+            )
+            
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": report.to_markdown()
+                    }
+                ]
+            }
+            
+        except ImportError:
+            # 如果增强型报告生成器不可用，回退到基本报告
+            self.logger.warning("Enhanced report generator not available, falling back to basic report")
+            return await self._generate_weekly_report(arguments)
+        except Exception as e:
+            self.logger.error(f"Enhanced weekly report generation failed: {e}")
+            raise
+    
+    async def _generate_enhanced_monthly_report(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """生成增强型月报"""
+        project_id = arguments.get("project_id")
+        year = arguments.get("year")
+        month = arguments.get("month")
+        language_str = arguments.get("language", "ja")
+        
+        if not all([project_id, year, month]):
+            raise InvalidParams("Missing required parameters: project_id, year, month")
+        
+        # 导入增强型报告生成器
+        try:
+            from app.services.enhanced_report_generator import EnhancedReportGeneratorService, ReportLanguage
+            
+            # 创建增强型报告生成器实例
+            enhanced_generator = EnhancedReportGeneratorService(self.client)
+            
+            # 解析语言参数
+            language_map = {
+                "zh": ReportLanguage.CHINESE,
+                "ja": ReportLanguage.JAPANESE,
+                "en": ReportLanguage.ENGLISH
+            }
+            language = language_map.get(language_str.lower(), ReportLanguage.JAPANESE)
+            
+            # 生成增强型报告
+            report = await enhanced_generator.generate_enhanced_monthly_report(
+                project_id, year, month, language
+            )
+            
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": report.to_markdown()
+                    }
+                ]
+            }
+            
+        except ImportError:
+            # 如果增强型报告生成器不可用，回退到基本报告
+            self.logger.warning("Enhanced report generator not available, falling back to basic report")
+            return await self._generate_monthly_report(arguments)
+        except Exception as e:
+            self.logger.error(f"Enhanced monthly report generation failed: {e}")
+            raise

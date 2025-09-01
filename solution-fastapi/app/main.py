@@ -78,7 +78,9 @@ async def lifespan(app: FastAPI):
         logger.info("Connection pools initialized successfully")
         
         # Initialize OpenProject client using dependency injection
-        openproject_client = await get_openproject_client()
+        from app.dependencies import get_http_client_pool
+        http_client = get_http_client_pool()
+        openproject_client = await get_openproject_client(settings, http_client)
         
         # Create MCP handler with async support
         mcp_handler = MCPHandler(openproject_client)

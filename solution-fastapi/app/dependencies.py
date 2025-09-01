@@ -46,12 +46,7 @@ def get_http_client_pool() -> httpx.AsyncClient:
                 pool=5.0          # Pool acquisition timeout
             ),
             # Enable HTTP/2 for better performance if supported
-            http2=True,
-            # Enable connection pooling
-            pool_limits=httpx.Limits(
-                max_keepalive_connections=50,
-                max_connections=100
-            )
+            # http2=True  # Disabled for testing, requires h2 package
         )
     
     if _httpx_client.is_closed:
