@@ -55,6 +55,7 @@ except Exception as e:
 
 # Global service instances with proper typing
 mcp_handler: Optional[MCPHandler] = None
+openproject_client: Optional[AsyncOpenProjectClient] = None
 
 # Import WebSocket modules
 from app.websockets.manager import connection_manager
@@ -64,7 +65,7 @@ from app.websockets.notifications import notification_service
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle management with async resource initialization"""
-    global mcp_handler
+    global mcp_handler, openproject_client
     
     # Import dependencies here to avoid circular imports
     from app.dependencies import get_openproject_client, close_http_client_pool
@@ -326,7 +327,7 @@ async def health_check():
         return JSONResponse(content=health_data, status_code=status_code)
         
     except Exception as e:
-        logger.error("Health check failed", exc_info=True)
+        logger.error(f"Health check failed: {e}")
         return JSONResponse(
             content={
                 "status": "unhealthy",
@@ -343,7 +344,7 @@ async def performance_stats():
     pool_manager = get_connection_pool_manager()
     pool_stats = pool_manager.get_all_stats()
     
-    websocket_stats = connection_manager.get_connection_stats()
+    websocket_stats = await connection_manager.get_connection_stats()
     
     return {
         "connection_pools": {
@@ -458,7 +459,7 @@ async def handle_mcp_request(
         raise
         
     except Exception as e:
-        logger.error(f"MCP request processing failed: {e}", exc_info=True)
+        logger.error(f"MCP request processing failed: {e}")
         
         # Return JSON-RPC error response
         error_response = {
@@ -625,7 +626,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Async general exception handler"""
-    logger.error(f"Unexpected error: {exc}", exc_info=True)
+    logger.error(f"Unexpected error: {exc}")
     
     return JSONResponse(
         status_code=500,

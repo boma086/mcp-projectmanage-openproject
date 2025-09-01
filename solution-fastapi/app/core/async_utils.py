@@ -101,7 +101,7 @@ class AsyncTimeoutManager:
     """Advanced timeout management for async MCP operations"""
     
     @staticmethod
-    async def with_timeout(
+    def with_timeout(
         timeout: float,
         operation_name: str,
         raise_on_timeout: bool = True

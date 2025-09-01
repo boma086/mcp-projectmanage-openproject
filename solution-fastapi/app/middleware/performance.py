@@ -71,7 +71,8 @@ class AsyncPerformanceMiddleware(BaseHTTPMiddleware):
         request_id = self._generate_request_id()
         
         # Add request ID to headers for tracing
-        request.headers.__dict__["headers"].append((b"x-request-id", request_id.encode()))
+        if hasattr(request.headers, '__dict__') and 'headers' in request.headers.__dict__:
+            request.headers.__dict__["headers"].append((b"x-request-id", request_id.encode()))
         
         # Check rate limiting
         if self.settings.rate_limit_enabled:

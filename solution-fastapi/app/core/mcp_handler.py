@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 class MCPHandler:
     """High-performance async MCP protocol handler with production optimizations"""
     
-    def __init__(self):
+    def __init__(self, openproject_client=None):
         self.openproject_service: Optional[OpenProjectService] = None
         self.tool_service: Optional[ToolService] = None
         self.resource_service: Optional[ResourceService] = None
@@ -47,6 +47,7 @@ class MCPHandler:
         self.initialized = False
         self._exit_stack = AsyncExitStack()
         self._operation_semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
+        self._openproject_client = openproject_client  # Store for initialization
         self.server_info = {
             "name": settings.app_name,
             "version": settings.app_version,
@@ -71,10 +72,19 @@ class MCPHandler:
             
             async with connection_pool.acquire_connection(timeout=10.0):
                 # Initialize OpenProject service with connection pooling
-                self.openproject_service = OpenProjectService(
-                    url=settings.openproject_url,
-                    api_key=settings.openproject_api_key
-                )
+                if self._openproject_client:
+                    # Use provided OpenProject client
+                    self.openproject_service = OpenProjectService(
+                        url=settings.openproject_url,
+                        api_key=settings.openproject_api_key,
+                        http_client=self._openproject_client
+                    )
+                else:
+                    # Create new OpenProject service
+                    self.openproject_service = OpenProjectService(
+                        url=settings.openproject_url,
+                        api_key=settings.openproject_api_key
+                    )
                 await self.openproject_service.initialize()
                 
                 # Initialize other services with dependency injection

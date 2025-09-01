@@ -17,7 +17,7 @@ async def test_connection_pool():
     print("Testing connection pool...")
     
     try:
-        from app.core.connection_pool import get_connection_pool_manager
+        from app.core.connection_pool import get_connection_pool_manager, ConnectionType
         
         manager = get_connection_pool_manager()
         await manager.initialize()

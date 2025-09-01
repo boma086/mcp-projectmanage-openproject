@@ -80,6 +80,8 @@ class ConnectionManager:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._metrics_task: Optional[asyncio.Task] = None
         self._is_running = False
+        self._connection_lock = asyncio.Lock()
+        self._subscription_lock = asyncio.Lock()
     
     async def start(self):
         """Start background tasks for heartbeat and metrics"""
@@ -103,23 +105,24 @@ class ConnectionManager:
         if client_id is None:
             client_id = str(uuid.uuid4())
         
-        # Check connection limits
-        if len(self.active_connections) >= settings.max_websocket_connections:
-            raise WebSocketDisconnect(
-                code=1008,  # Policy violation
-                reason="Maximum connections reached"
+        async with self._connection_lock:
+            # Check connection limits
+            if len(self.active_connections) >= settings.max_websocket_connections:
+                raise WebSocketDisconnect(
+                    code=1008,  # Policy violation
+                    reason="Maximum connections reached"
+                )
+            
+            await websocket.accept()
+            self.active_connections[client_id] = websocket
+            
+            # Initialize metrics
+            now = time.time()
+            self.connection_metrics[client_id] = ConnectionMetrics(
+                client_id=client_id,
+                connected_at=now,
+                last_activity=now
             )
-        
-        await websocket.accept()
-        self.active_connections[client_id] = websocket
-        
-        # Initialize metrics
-        now = time.time()
-        self.connection_metrics[client_id] = ConnectionMetrics(
-            client_id=client_id,
-            connected_at=now,
-            last_activity=now
-        )
         
         logger.info(f"WebSocket client {client_id} connected")
         
@@ -138,36 +141,41 @@ class ConnectionManager:
         
         return client_id
     
-    def disconnect(self, client_id: str):
+    async def disconnect(self, client_id: str):
         """Remove connection and cleanup resources"""
-        if client_id in self.active_connections:
-            del self.active_connections[client_id]
-            
-            # Remove from all subscriptions
-            for subscription_set in self.subscriptions.values():
-                subscription_set.discard(client_id)
-            
-            # Cleanup metrics
-            if client_id in self.connection_metrics:
-                del self.connection_metrics[client_id]
-            
-            logger.info(f"WebSocket client {client_id} disconnected")
+        async with self._connection_lock:
+            if client_id in self.active_connections:
+                del self.active_connections[client_id]
+                
+                # Remove from all subscriptions
+                async with self._subscription_lock:
+                    for subscription_set in self.subscriptions.values():
+                        subscription_set.discard(client_id)
+                
+                # Cleanup metrics
+                if client_id in self.connection_metrics:
+                    del self.connection_metrics[client_id]
+                
+                logger.info(f"WebSocket client {client_id} disconnected")
     
     async def send_personal_message(self, message: Dict[str, Any], client_id: str):
         """Send message to specific client with error handling"""
-        if client_id not in self.active_connections:
-            logger.warning(f"Attempted to send message to disconnected client: {client_id}")
-            return
+        async with self._connection_lock:
+            if client_id not in self.active_connections:
+                logger.warning(f"Attempted to send message to disconnected client: {client_id}")
+                return
         
         try:
             message_json = json.dumps(message)
-            await self.active_connections[client_id].send_text(message_json)
-            
-            # Update metrics
-            if client_id in self.connection_metrics:
-                self.connection_metrics[client_id].bytes_sent += len(message_json)
-                self.connection_metrics[client_id].message_count += 1
-                self.connection_metrics[client_id].last_activity = time.time()
+            async with self._connection_lock:
+                if client_id in self.active_connections:
+                    await self.active_connections[client_id].send_text(message_json)
+                    
+                    # Update metrics
+                    if client_id in self.connection_metrics:
+                        self.connection_metrics[client_id].bytes_sent += len(message_json)
+                        self.connection_metrics[client_id].message_count += 1
+                        self.connection_metrics[client_id].last_activity = time.time()
                 
         except WebSocketDisconnect:
             self.disconnect(client_id)
@@ -178,109 +186,114 @@ class ConnectionManager:
     
     async def broadcast(self, message: Dict[str, Any], subscription_type: Optional[str] = None):
         """Broadcast message to all connected clients or specific subscription"""
-        targets = set()
-        
-        if subscription_type:
-            # Send to specific subscription
-            targets = self.subscriptions.get(subscription_type, set())
-        else:
-            # Send to all connected clients
-            targets = set(self.active_connections.keys())
+        async with self._subscription_lock:
+            if subscription_type:
+                # Send to specific subscription
+                targets = self.subscriptions.get(subscription_type, set()).copy()
+            else:
+                # Send to all connected clients
+                async with self._connection_lock:
+                    targets = set(self.active_connections.keys())
         
         message_json = json.dumps(message)
         message_size = len(message_json)
         
         for client_id in targets:
-            if client_id in self.active_connections:
-                try:
-                    await self.active_connections[client_id].send_text(message_json)
-                    
-                    # Update metrics
-                    if client_id in self.connection_metrics:
-                        self.connection_metrics[client_id].bytes_sent += message_size
-                        self.connection_metrics[client_id].message_count += 1
-                        self.connection_metrics[client_id].last_activity = time.time()
+            async with self._connection_lock:
+                if client_id in self.active_connections:
+                    try:
+                        await self.active_connections[client_id].send_text(message_json)
                         
-                except WebSocketDisconnect:
-                    self.disconnect(client_id)
-                except Exception as e:
-                    logger.error(f"Failed to broadcast to client {client_id}: {e}")
-                    if client_id in self.connection_metrics:
-                        self.connection_metrics[client_id].error_count += 1
+                        # Update metrics
+                        if client_id in self.connection_metrics:
+                            self.connection_metrics[client_id].bytes_sent += message_size
+                            self.connection_metrics[client_id].message_count += 1
+                            self.connection_metrics[client_id].last_activity = time.time()
+                            
+                    except WebSocketDisconnect:
+                        self.disconnect(client_id)
+                    except Exception as e:
+                        logger.error(f"Failed to broadcast to client {client_id}: {e}")
+                        if client_id in self.connection_metrics:
+                            self.connection_metrics[client_id].error_count += 1
     
     async def subscribe(self, client_id: str, subscription_type: str):
         """Subscribe client to specific event type"""
-        if subscription_type in self.subscriptions:
-            self.subscriptions[subscription_type].add(client_id)
-            if client_id in self.connection_metrics:
-                self.connection_metrics[client_id].subscriptions.add(subscription_type)
-            
-            logger.info(f"Client {client_id} subscribed to {subscription_type}")
-            
-            await self.send_personal_message({
-                "type": "subscription_added",
-                "subscription": subscription_type,
-                "message": f"Subscribed to {subscription_type} events",
-                "timestamp": time.time()
-            }, client_id)
+        async with self._subscription_lock:
+            if subscription_type in self.subscriptions:
+                self.subscriptions[subscription_type].add(client_id)
+                if client_id in self.connection_metrics:
+                    self.connection_metrics[client_id].subscriptions.add(subscription_type)
+                
+                logger.info(f"Client {client_id} subscribed to {subscription_type}")
+                
+                await self.send_personal_message({
+                    "type": "subscription_added",
+                    "subscription": subscription_type,
+                    "message": f"Subscribed to {subscription_type} events",
+                    "timestamp": time.time()
+                }, client_id)
     
     async def unsubscribe(self, client_id: str, subscription_type: str):
         """Unsubscribe client from specific event type"""
-        if subscription_type in self.subscriptions:
-            self.subscriptions[subscription_type].discard(client_id)
-            if client_id in self.connection_metrics:
-                self.connection_metrics[client_id].subscriptions.discard(subscription_type)
-            
-            logger.info(f"Client {client_id} unsubscribed from {subscription_type}")
-            
-            await self.send_personal_message({
-                "type": "subscription_removed",
-                "subscription": subscription_type,
-                "message": f"Unsubscribed from {subscription_type} events",
-                "timestamp": time.time()
-            }, client_id)
+        async with self._subscription_lock:
+            if subscription_type in self.subscriptions:
+                self.subscriptions[subscription_type].discard(client_id)
+                if client_id in self.connection_metrics:
+                    self.connection_metrics[client_id].subscriptions.discard(subscription_type)
+                
+                logger.info(f"Client {client_id} unsubscribed from {subscription_type}")
+                
+                await self.send_personal_message({
+                    "type": "subscription_removed",
+                    "subscription": subscription_type,
+                    "message": f"Unsubscribed from {subscription_type} events",
+                    "timestamp": time.time()
+                }, client_id)
     
-    def get_connection_stats(self) -> Dict[str, Any]:
+    async def get_connection_stats(self) -> Dict[str, Any]:
         """Get comprehensive connection statistics"""
         now = time.time()
-        active_connections = len(self.active_connections)
-        
-        stats = {
-            "total_connections": active_connections,
-            "max_connections": settings.max_websocket_connections,
-            "connection_utilization": f"{(active_connections / settings.max_websocket_connections) * 100:.1f}%",
-            "subscription_counts": {
-                subscription_type: len(subscribers)
-                for subscription_type, subscribers in self.subscriptions.items()
-            },
-            "total_messages_sent": sum(
-                metrics.message_count for metrics in self.connection_metrics.values()
-            ),
-            "total_bytes_sent": sum(
-                metrics.bytes_sent for metrics in self.connection_metrics.values()
-            ),
-            "total_errors": sum(
-                metrics.error_count for metrics in self.connection_metrics.values()
-            ),
-            "uptime_seconds": now - min(
-                (metrics.connected_at for metrics in self.connection_metrics.values()),
-                default=now
-            )
-        }
-        
-        return stats
+        async with self._connection_lock:
+            active_connections = len(self.active_connections)
+            
+            stats = {
+                "total_connections": active_connections,
+                "max_connections": settings.max_websocket_connections,
+                "connection_utilization": f"{(active_connections / settings.max_websocket_connections) * 100:.1f}%",
+                "subscription_counts": {
+                    subscription_type: len(subscribers)
+                    for subscription_type, subscribers in self.subscriptions.items()
+                },
+                "total_messages_sent": sum(
+                    metrics.message_count for metrics in self.connection_metrics.values()
+                ),
+                "total_bytes_sent": sum(
+                    metrics.bytes_sent for metrics in self.connection_metrics.values()
+                ),
+                "total_errors": sum(
+                    metrics.error_count for metrics in self.connection_metrics.values()
+                ),
+                "uptime_seconds": now - min(
+                    (metrics.connected_at for metrics in self.connection_metrics.values()),
+                    default=now
+                )
+            }
+            
+            return stats
     
-    def get_connection_metrics(self, client_id: Optional[str] = None) -> Dict[str, Any]:
+    async def get_connection_metrics(self, client_id: Optional[str] = None) -> Dict[str, Any]:
         """Get metrics for specific client or all clients"""
-        if client_id:
-            if client_id in self.connection_metrics:
-                return self.connection_metrics[client_id].to_dict()
-            return {}
-        
-        return {
-            client_id: metrics.to_dict()
-            for client_id, metrics in self.connection_metrics.items()
-        }
+        async with self._connection_lock:
+            if client_id:
+                if client_id in self.connection_metrics:
+                    return self.connection_metrics[client_id].to_dict()
+                return {}
+            
+            return {
+                client_id: metrics.to_dict()
+                for client_id, metrics in self.connection_metrics.items()
+            }
     
     async def _heartbeat_loop(self):
         """Background task to send heartbeat messages"""
@@ -309,7 +322,7 @@ class ConnectionManager:
             try:
                 await asyncio.sleep(60)  # Log every minute
                 
-                stats = self.get_connection_stats()
+                stats = await self.get_connection_stats()
                 logger.info(
                     f"WebSocket metrics - Connections: {stats['total_connections']}/"
                     f"{stats['max_connections']}, Messages: {stats['total_messages_sent']}, "
