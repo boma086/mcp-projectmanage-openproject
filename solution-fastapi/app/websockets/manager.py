@@ -178,7 +178,7 @@ class ConnectionManager:
                         self.connection_metrics[client_id].last_activity = time.time()
                 
         except WebSocketDisconnect:
-            self.disconnect(client_id)
+            await self.disconnect(client_id)
         except Exception as e:
             logger.error(f"Failed to send message to client {client_id}: {e}")
             if client_id in self.connection_metrics:
@@ -211,7 +211,7 @@ class ConnectionManager:
                             self.connection_metrics[client_id].last_activity = time.time()
                             
                     except WebSocketDisconnect:
-                        self.disconnect(client_id)
+                        await self.disconnect(client_id)
                     except Exception as e:
                         logger.error(f"Failed to broadcast to client {client_id}: {e}")
                         if client_id in self.connection_metrics:
@@ -251,36 +251,37 @@ class ConnectionManager:
                     "timestamp": time.time()
                 }, client_id)
     
-    async def get_connection_stats(self) -> Dict[str, Any]:
+    def get_connection_stats(self) -> Dict[str, Any]:
         """Get comprehensive connection statistics"""
         now = time.time()
-        async with self._connection_lock:
-            active_connections = len(self.active_connections)
-            
-            stats = {
-                "total_connections": active_connections,
-                "max_connections": settings.max_websocket_connections,
-                "connection_utilization": f"{(active_connections / settings.max_websocket_connections) * 100:.1f}%",
-                "subscription_counts": {
-                    subscription_type: len(subscribers)
-                    for subscription_type, subscribers in self.subscriptions.items()
-                },
-                "total_messages_sent": sum(
-                    metrics.message_count for metrics in self.connection_metrics.values()
-                ),
-                "total_bytes_sent": sum(
-                    metrics.bytes_sent for metrics in self.connection_metrics.values()
-                ),
-                "total_errors": sum(
-                    metrics.error_count for metrics in self.connection_metrics.values()
-                ),
-                "uptime_seconds": now - min(
-                    (metrics.connected_at for metrics in self.connection_metrics.values()),
-                    default=now
-                )
-            }
-            
-            return stats
+        # For synchronous access, we need to handle the lock differently
+        # Since this is just reading data, we'll access it directly without locking
+        active_connections = len(self.active_connections)
+        
+        stats = {
+            "total_connections": active_connections,
+            "max_connections": settings.max_websocket_connections,
+            "connection_utilization": f"{(active_connections / settings.max_websocket_connections) * 100:.1f}%",
+            "subscription_counts": {
+                subscription_type: len(subscribers)
+                for subscription_type, subscribers in self.subscriptions.items()
+            },
+            "total_messages_sent": sum(
+                metrics.message_count for metrics in self.connection_metrics.values()
+            ),
+            "total_bytes_sent": sum(
+                metrics.bytes_sent for metrics in self.connection_metrics.values()
+            ),
+            "total_errors": sum(
+                metrics.error_count for metrics in self.connection_metrics.values()
+            ),
+            "uptime_seconds": now - min(
+                (metrics.connected_at for metrics in self.connection_metrics.values()),
+                default=now
+            )
+        }
+        
+        return stats
     
     async def get_connection_metrics(self, client_id: Optional[str] = None) -> Dict[str, Any]:
         """Get metrics for specific client or all clients"""
@@ -322,7 +323,7 @@ class ConnectionManager:
             try:
                 await asyncio.sleep(60)  # Log every minute
                 
-                stats = await self.get_connection_stats()
+                stats = self.get_connection_stats()
                 logger.info(
                     f"WebSocket metrics - Connections: {stats['total_connections']}/"
                     f"{stats['max_connections']}, Messages: {stats['total_messages_sent']}, "

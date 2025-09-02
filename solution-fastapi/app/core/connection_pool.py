@@ -95,7 +95,6 @@ class HTTPConnectionPool(ConnectionPool):
     def __init__(self, config: PoolConfig):
         super().__init__(config, ConnectionType.HTTP)
         self._client: Optional[httpx.AsyncClient] = None
-        self._active_connections: Set[httpx.AsyncClient] = set()
         
     async def acquire(self) -> httpx.AsyncClient:
         """Acquire an HTTP client from the pool"""
@@ -120,7 +119,7 @@ class HTTPConnectionPool(ConnectionPool):
         
         with self._lock:
             self.stats.total_connections = 1  # Single client with connection pooling
-            self.stats.active_connections = len(self._active_connections) + 1
+            self.stats.active_connections += 1
             self.stats.total_requests += 1
             self.stats.connection_wait_time_ms = (time.time() - start_time) * 1000
             
@@ -134,11 +133,14 @@ class HTTPConnectionPool(ConnectionPool):
     async def health_check(self) -> bool:
         """Check if HTTP client is healthy"""
         try:
-            if self._client and not self._client.is_closed:
-                # Simple health check by making a HEAD request to a known endpoint
-                response = await self._client.head("https://httpbin.org/get", timeout=5.0)
-                self._is_healthy = response.status_code < 500
+            if self._client is None:
+                # Client hasn't been used yet, but that's okay - it will be created on demand
+                self._is_healthy = True
+            elif not self._client.is_closed:
+                # Client exists and is not closed
+                self._is_healthy = True
             else:
+                # Client exists but is closed
                 self._is_healthy = False
         except Exception as e:
             logger.warning(f"HTTP connection pool health check failed: {e}")

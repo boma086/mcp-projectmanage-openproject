@@ -510,7 +510,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 
     except WebSocketDisconnect:
         # Handle graceful disconnect
-        connection_manager.disconnect(actual_client_id)
+        await connection_manager.disconnect(actual_client_id)
         await notification_service.notify_connection_status(
             actual_client_id, 
             "disconnected",
