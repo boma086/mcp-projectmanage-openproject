@@ -667,9 +667,9 @@ if __name__ == "__main__":
         "log_level": settings.log_level.lower(),
         "reload": settings.debug,
         "workers": 1,  # Single worker for development, adjust for production
-        "loop": "uvloop" if not settings.debug else "asyncio",  # Use uvloop for better performance
-        "http": "httptools" if not settings.debug else "h11",  # Use httptools for better performance
-        "ws": "websockets",  # WebSocket implementation
+        "loop": "asyncio",  # Use asyncio to avoid websockets compatibility issues
+        "http": "h11",  # Use h11 to avoid websockets compatibility issues
+        "ws": None,  # Disable WebSocket for now to avoid compatibility issues
         "lifespan": "on",  # Enable lifespan events
         "access_log": settings.debug,
         "use_colors": True

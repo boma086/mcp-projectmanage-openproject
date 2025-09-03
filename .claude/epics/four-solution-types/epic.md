@@ -2,11 +2,11 @@
 name: four-solution-types
 status: backlog
 created: 2025-08-30T06:55:06Z
-progress: 0%
+progress: 40%
 prd: .claude/prds/four-solution-types.md
 github: https://github.com/boma086/mcp-projectmanage-openproject/issues/2
 updated: 2025-08-31T15:53:35Z
-last_sync: 2025-09-01T01:37:38Z
+last_sync: 2025-09-03T04:23:59Z
 # Epic: Four Solution Architecture Types Implementation
 
 ## Overview

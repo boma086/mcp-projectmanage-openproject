@@ -49,15 +49,15 @@ async def test_performance_endpoints():
     
     async with httpx.AsyncClient() as client:
         # Test root endpoint
-        response = await client.get("http://localhost:8020/")
+        response = await client.get("http://localhost:8000/")
         print(f"Root endpoint: {response.status_code}")
         
         # Test health endpoint
-        response = await client.get("http://localhost:8020/health")
+        response = await client.get("http://localhost:8000/health")
         print(f"Health endpoint: {response.status_code}")
         
         # Test performance endpoint
-        response = await client.get("http://localhost:8020/performance")
+        response = await client.get("http://localhost:8000/performance")
         print(f"Performance endpoint: {response.status_code}")
         
         if response.status_code == 200:
@@ -74,7 +74,7 @@ async def test_rate_limiting():
         
         # Make multiple rapid requests to trigger rate limiting
         for i in range(10):
-            requests.append(client.get("http://localhost:8020/"))
+            requests.append(client.get("http://localhost:8000/"))
         
         responses = await asyncio.gather(*requests, return_exceptions=True)
         
