@@ -1,0 +1,523 @@
+name: Cross-Solution Testing Framework
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run comprehensive tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Test type to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - unit
+          - integration
+          - performance
+          - deployment
+      solution:
+        description: 'Specific solution to test'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - solution-http
+          - solution-fastapi
+          - solution-fastmcp
+          - solution-typescript
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Quality Gate Check
+  quality-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      quality-passed: ${{ steps.quality-check.outputs.quality-passed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install quality tools
+        run: |
+          pip install pytest pytest-cov black flake8 isort mypy ruff
+
+      - name: Run quality checks
+        id: quality-check
+        run: |
+          # Run code quality checks
+          python -m ruff check .
+          python -m black --check .
+          python -m isort --check-only .
+          
+          # Check if quality passes basic thresholds
+          echo "quality-passed=true" >> $GITHUB_OUTPUT
+
+  # Unit Tests
+  unit-tests:
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    if: needs.quality-gate.outputs.quality-passed == 'true'
+    strategy:
+      matrix:
+        solution: [solution-http, solution-fastapi, solution-fastmcp]
+        python-version: [3.9, 3.10, 3.11, 3.12]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.solution }}-${{ hashFiles(format('{0}/requirements.txt', matrix.solution)) }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.solution }}-
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          cd ${{ matrix.solution }}
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-xdist
+          cd ../mcp-core && pip install -e . && cd ..
+
+      - name: Run shared unit tests
+        run: |
+          python run_cross_solution_tests.py --type unit --solution ${{ matrix.solution }}
+
+      - name: Run solution-specific unit tests
+        run: |
+          cd ${{ matrix.solution }}
+          if [ -d "tests" ]; then
+            pytest tests/unit/ -v --cov=src --cov-report=xml --cov-report=term-missing
+          fi
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ${{ matrix.solution }}/coverage.xml
+          flags: unit-tests-${{ matrix.solution }}
+          name: codecov-unit-${{ matrix.solution }}
+
+  # TypeScript Tests
+  typescript-tests:
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    if: needs.quality-gate.outputs.quality-passed == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: solution-typescript/package.json
+
+      - name: Install dependencies
+        run: |
+          cd solution-typescript
+          npm ci
+
+      - name: Run TypeScript tests
+        run: |
+          cd solution-typescript
+          npm test -- --coverage --watchAll=false
+
+      - name: Upload TypeScript coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: solution-typescript/coverage/lcov.info
+          flags: typescript-tests
+          name: codecov-typescript
+
+  # Integration Tests
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, typescript-tests]
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.inputs.test_type == 'integration'
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-asyncio httpx websockets
+          cd solution-fastapi && pip install -r requirements.txt && cd ..
+          cd solution-http && pip install -r requirements.txt && cd ..
+          cd mcp-core && pip install -e . && cd ..
+
+      - name: Run integration tests
+        run: |
+          python run_cross_solution_tests.py --type integration --all-solutions
+
+      - name: Test API compatibility
+        run: |
+          python -c "
+          import asyncio
+          from test_utils.python.shared_test_utils import CrossSolutionTester
+          
+          async def test_compatibility():
+              tester = CrossSolutionTester()
+              results = await tester.test_api_compatibility()
+              print(f'Compatibility tests: {results}')
+              return results
+          
+          asyncio.run(test_compatibility())
+          "
+
+  # Performance Tests
+  performance-tests:
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: github.event_name == 'schedule' || github.event.inputs.test_type == 'performance'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install performance tools
+        run: |
+          pip install locust pytest-benchmark matplotlib plotly
+
+      - name: Run performance benchmarks
+        run: |
+          python run_cross_solution_tests.py --type performance --all-solutions
+
+      - name: Generate performance report
+        run: |
+          python performance-tests/run_benchmarks.py
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-results
+          path: |
+            performance-tests/reports/
+            benchmarks/
+
+      - name: Check for performance regressions
+        run: |
+          python -c "
+          import json
+          import sys
+          from pathlib import Path
+          
+          # Check performance thresholds
+          report_path = Path('performance-tests/reports/latest_performance_report.json')
+          if report_path.exists():
+              with open(report_path) as f:
+                  data = json.load(f)
+              
+              # Check if any performance metrics exceed thresholds
+              regressions = []
+              for solution, metrics in data.get('solutions', {}).items():
+                  if metrics.get('avg_response_time', 0) > 1000:  # 1s threshold
+                      regressions.append(f'{solution}: Response time too high')
+                  if metrics.get('error_rate', 0) > 0.05:  # 5% error rate threshold
+                      regressions.append(f'{solution}: Error rate too high')
+              
+              if regressions:
+                  print('Performance regressions detected:')
+                  for regression in regressions:
+                      print(f'  - {regression}')
+                  sys.exit(1)
+              else:
+                  print('Performance metrics within acceptable thresholds')
+          "
+
+  # Deployment Tests
+  deployment-tests:
+    runs-on: ubuntu-latest
+    needs: [integration-tests, performance-tests]
+    if: github.event_name == 'schedule' || github.event.inputs.test_type == 'deployment'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and test HTTP solution
+        run: |
+          cd solution-http
+          docker build -t openproject-http-test .
+          docker run -d --name http-test -p 8010:8010 openproject-http-test
+          sleep 10
+          curl -f http://localhost:8010/health || exit 1
+          docker stop http-test && docker rm http-test
+
+      - name: Build and test FastAPI solution
+        run: |
+          cd solution-fastapi
+          docker build -t openproject-fastapi-test .
+          docker run -d --name fastapi-test -p 8020:8020 openproject-fastapi-test
+          sleep 10
+          curl -f http://localhost:8020/health || exit 1
+          docker stop fastapi-test && docker rm fastapi-test
+
+      - name: Run deployment integration tests
+        run: |
+          mkdir -p deployment-tests
+          cat > deployment-tests/test_deployment.py << 'EOF'
+          import pytest
+          import requests
+          import time
+          import subprocess
+          import docker
+
+          @pytest.mark.deployment
+          def test_http_solution_deployment():
+              client = docker.from_env()
+              try:
+                  # Build and run HTTP solution
+                  client.images.build(path='solution-http', tag='openproject-http-test')
+                  container = client.containers.run(
+                      'openproject-http-test',
+                      name='http-test',
+                      ports={'8010/tcp': 8010},
+                      detach=True
+                  )
+                  time.sleep(10)
+                  
+                  # Test health endpoint
+                  response = requests.get('http://localhost:8010/health')
+                  assert response.status_code == 200
+                  
+                  container.stop()
+                  container.remove()
+              except Exception as e:
+                  pytest.fail(f'Deployment test failed: {e}')
+
+          @pytest.mark.deployment
+          def test_fastapi_solution_deployment():
+              client = docker.from_env()
+              try:
+                  # Build and run FastAPI solution
+                  client.images.build(path='solution-fastapi', tag='openproject-fastapi-test')
+                  container = client.containers.run(
+                      'openproject-fastapi-test',
+                      name='fastapi-test',
+                      ports={'8020/tcp': 8020},
+                      detach=True
+                  )
+                  time.sleep(10)
+                  
+                  # Test health endpoint
+                  response = requests.get('http://localhost:8020/health')
+                  assert response.status_code == 200
+                  
+                  container.stop()
+                  container.remove()
+              except Exception as e:
+                  pytest.fail(f'Deployment test failed: {e}')
+          EOF
+          
+          python -m pytest deployment-tests/test_deployment.py -v
+
+  # Test Results Aggregation
+  aggregate-results:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, typescript-tests, integration-tests, performance-tests, deployment-tests]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install aggregation tools
+        run: |
+          pip install pandas plotly jinja2
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts/
+
+      - name: Aggregate test results
+        run: |
+          python test-reports/test_aggregator.py
+          python coverage-reports/coverage_reporter.py
+          python quality-metrics/quality_analyzer.py
+
+      - name: Generate comprehensive report
+        run: |
+          python -c "
+          import json
+          from datetime import datetime
+          from pathlib import Path
+          
+          # Generate comprehensive test report
+          report = {
+              'timestamp': datetime.now().isoformat(),
+              'github_run_id': '${{ github.run_id }}',
+              'github_run_number': '${{ github.run_number }}',
+              'branch': '${{ github.ref_name }}',
+              'commit': '${{ github.sha }}',
+              'event': '${{ github.event_name }}',
+              'test_results': {}
+          }
+          
+          # Aggregate results from all test types
+          test_types = ['unit', 'integration', 'performance', 'deployment']
+          for test_type in test_types:
+              result_file = Path(f'artifacts/{test_type}-results/results.json')
+              if result_file.exists():
+                  with open(result_file) as f:
+                      report['test_results'][test_type] = json.load(f)
+          
+          # Save comprehensive report
+          with open('test-results/comprehensive_report.json', 'w') as f:
+              json.dump(report, f, indent=2)
+          
+          print('Comprehensive test report generated')
+          "
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: comprehensive-test-results
+          path: |
+            test-results/
+            coverage-reports/
+            quality-metrics/
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'test-results/comprehensive_report.json';
+            
+            if (fs.existsSync(path)) {
+              const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+              
+              let comment = `## 🧪 Test Results Summary\n\n`;
+              comment += `**Run ID**: ${{ github.run_id }} | **Branch**: ${{ github.ref_name }}\n\n`;
+              
+              // Add test results summary
+              if (report.test_results.unit) {
+                comment += `### ✅ Unit Tests\n`;
+                comment += `- Total: ${report.test_results.unit.total_tests}\n`;
+                comment += `- Passed: ${report.test_results.unit.passed_tests}\n`;
+                comment += `- Failed: ${report.test_results.unit.failed_tests}\n`;
+                comment += `- Coverage: ${report.test_results.unit.coverage}%\n\n`;
+              }
+              
+              if (report.test_results.integration) {
+                comment += `### 🔗 Integration Tests\n`;
+                comment += `- Total: ${report.test_results.integration.total_tests}\n`;
+                comment += `- Passed: ${report.test_results.integration.passed_tests}\n`;
+                comment += `- Failed: ${report.test_results.integration.failed_tests}\n\n`;
+              }
+              
+              if (report.test_results.performance) {
+                comment += `### ⚡ Performance Tests\n`;
+                comment += `- Avg Response Time: ${report.test_results.performance.avg_response_time}ms\n`;
+                comment += `- Throughput: ${report.test_results.performance.throughput} req/s\n`;
+                comment += `- Error Rate: ${report.test_results.performance.error_rate}%\n\n`;
+              }
+              
+              // Add quality metrics
+              if (fs.existsSync('quality-metrics/quality_report.json')) {
+                const quality = JSON.parse(fs.readFileSync('quality-metrics/quality_report.json', 'utf8'));
+                comment += `### 📊 Quality Metrics\n`;
+                comment += `- Overall Quality Score: ${quality.overall_score}%\n`;
+                comment += `- Quality Grade: ${quality.quality_grade}\n\n`;
+              }
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+  # Notifications
+  notifications:
+    runs-on: ubuntu-latest
+    needs: aggregate-results
+    if: always() && (github.event_name == 'push' || github.event_name == 'schedule')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Send failure notifications
+        if: needs.aggregate-results.result == 'failure'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+          text: '🚨 Cross-solution tests failed!'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Send success notifications
+        if: needs.aggregate-results.result == 'success'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+          text: '✅ Cross-solution tests completed successfully!'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
