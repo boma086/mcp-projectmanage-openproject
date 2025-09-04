@@ -1,0 +1,834 @@
+name: Security and Performance Integration
+
+on:
+  workflow_call:
+    inputs:
+      solution:
+        description: 'Solution to test'
+        required: true
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        type: string
+      test-type:
+        description: 'Type of testing to perform'
+        required: false
+        type: string
+        default: 'full'
+      security-scan-enabled:
+        description: 'Enable security scanning'
+        required: false
+        type: boolean
+        default: true
+      performance-test-enabled:
+        description: 'Enable performance testing'
+        required: false
+        type: boolean
+        default: true
+
+  workflow_dispatch:
+    inputs:
+      solution:
+        description: 'Solution to test'
+        required: true
+        type: choice
+        options: [all, solution-http, solution-fastapi, solution-fastmcp, solution-typescript]
+        default: all
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [development, staging, production]
+        default: staging
+      test-type:
+        description: 'Type of testing to perform'
+        required: false
+        type: choice
+        options: [full, security-only, performance-only, smoke]
+        default: full
+      security-scan-enabled:
+        description: 'Enable security scanning'
+        required: false
+        type: boolean
+        default: true
+      performance-test-enabled:
+        description: 'Enable performance testing'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  setup:
+    name: Setup Testing Environment
+    runs-on: ubuntu-latest
+    outputs:
+      solutions: ${{ steps.setup.outputs.solutions }}
+      security-enabled: ${{ steps.setup.outputs.security-enabled }}
+      performance-enabled: ${{ steps.setup.outputs.performance-enabled }}
+      test-type: ${{ steps.setup.outputs.test-type }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup testing configuration
+      id: setup
+      run: |
+        SOLUTION="${{ inputs.solution }}"
+        ENVIRONMENT="${{ inputs.environment }}"
+        TEST_TYPE="${{ inputs.test-type }}"
+        SECURITY_ENABLED="${{ inputs.security-scan-enabled }}"
+        PERFORMANCE_ENABLED="${{ inputs.performance-test-enabled }}"
+        
+        # Determine solutions to test
+        if [ "$SOLUTION" = "all" ]; then
+          SOLUTIONS='["solution-http", "solution-fastapi", "solution-fastmcp", "solution-typescript"]'
+        else
+          SOLUTIONS="[\"$SOLUTION\"]"
+        fi
+        
+        # Adjust test type configuration
+        case $TEST_TYPE in
+          "security-only")
+            PERFORMANCE_ENABLED="false"
+            ;;
+          "performance-only")
+            SECURITY_ENABLED="false"
+            ;;
+          "smoke")
+            PERFORMANCE_ENABLED="false"
+            ;;
+        esac
+        
+        echo "solutions=$SOLUTIONS" >> $GITHUB_OUTPUT
+        echo "security-enabled=$SECURITY_ENABLED" >> $GITHUB_OUTPUT
+        echo "performance-enabled=$PERFORMANCE_ENABLED" >> $GITHUB_OUTPUT
+        echo "test-type=$TEST_TYPE" >> $GITHUB_OUTPUT
+        
+        echo "Testing configuration:"
+        echo "  Solutions: $SOLUTIONS"
+        echo "  Environment: $ENVIRONMENT"
+        echo "  Test Type: $TEST_TYPE"
+        echo "  Security Scanning: $SECURITY_ENABLED"
+        echo "  Performance Testing: $PERFORMANCE_ENABLED"
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.security-enabled == 'true'
+    
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.setup.outputs.solutions) }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install security tools
+      run: |
+        # Install Python security tools
+        python -m pip install --upgrade pip
+        pip install bandit safety semgrep
+        
+        # Install Node.js security tools
+        npm install -g npm-audit-resolver snyk
+        
+        # Install other security tools
+        curl -sfL https://raw.githubusercontent.com/securecodewarrior/github-action-add-sarif/main/install.sh | sh
+
+    - name: Run Bandit (Python security)
+      if: matrix.solution != 'solution-typescript'
+      run: |
+        echo "Running Bandit security scan for ${{ matrix.solution }}..."
+        
+        if [ -d "${{ matrix.solution }}" ]; then
+          cd "${{ matrix.solution }}"
+          
+          # Find Python files and scan them
+          find . -name "*.py" -exec bandit -r {} \; > bandit-report.txt 2>&1 || true
+          
+          # Generate SARIF output
+          bandit -r . -f json -o bandit-sarif.json || true
+          
+          cd ..
+        fi
+        
+        echo "Bandit scan completed for ${{ matrix.solution }}"
+
+    - name: Run Safety (Python dependency check)
+      if: matrix.solution != 'solution-typescript'
+      run: |
+        echo "Running Safety dependency check for ${{ matrix.solution }}..."
+        
+        if [ -d "${{ matrix.solution }}" ] && [ -f "${{ matrix.solution }}/requirements.txt" ]; then
+          cd "${{ matrix.solution }}"
+          safety check --json --output safety-report.json || true
+          cd ..
+        fi
+        
+        echo "Safety check completed for ${{ matrix.solution }}"
+
+    - name: Run npm audit (Node.js security)
+      if: matrix.solution == 'solution-typescript'
+      run: |
+        echo "Running npm audit for ${{ matrix.solution }}..."
+        
+        if [ -d "${{ matrix.solution }}" ] && [ -f "${{ matrix.solution }}/package.json" ]; then
+          cd "${{ matrix.solution }}"
+          npm audit --json > npm-audit-report.json 2>&1 || true
+          npm audit --audit-level moderate || true
+          cd ..
+        fi
+        
+        echo "npm audit completed for ${{ matrix.solution }}"
+
+    - name: Run Semgrep (SAST)
+      run: |
+        echo "Running Semgrep SAST scan for ${{ matrix.solution }}..."
+        
+        if [ -d "${{ matrix.solution }}" ]; then
+          # Scan for security vulnerabilities
+          semgrep --config=auto --sarif --output=semgrep-sarif.json "${{ matrix.solution }}" || true
+          
+          # Custom security rules
+          semgrep --config=p/security \
+                   --exclude="**/test*" \
+                   --exclude="**/node_modules*" \
+                   --sarif \
+                   --output=semgrep-security-sarif.json \
+                   "${{ matrix.solution }}" || true
+        fi
+        
+        echo "Semgrep scan completed for ${{ matrix.solution }}"
+
+    - name: Run Trivy (Container security)
+      run: |
+        echo "Running Trivy container scan for ${{ matrix.solution }}..."
+        
+        # Build image if it doesn't exist
+        if [ -d "${{ matrix.solution }}" ] && [ -f "${{ matrix.solution }}/Dockerfile" ]; then
+          cd "${{ matrix.solution }}"
+          
+          # Build test image
+          docker build -t test-${{ matrix.solution }}:latest .
+          
+          # Scan with Trivy
+          trivy image --format json --output trivy-report.json test-${{ matrix.solution }}:latest || true
+          trivy image --format sarif --output trivy-sarif.json test-${{ matrix.solution }}:latest || true
+          
+          # Clean up
+          docker rmi test-${{ matrix.solution }}:latest || true
+          
+          cd ..
+        fi
+        
+        echo "Trivy scan completed for ${{ matrix.solution }}"
+
+    - name: Run Gitleaks (Secret scanning)
+      run: |
+        echo "Running Gitleaks secret detection for ${{ matrix.solution }}..."
+        
+        if [ -d "${{ matrix.solution }}" ]; then
+          gitleaks detect --source "${{ matrix.solution }}" --report-format json --report-path gitleaks-report.json || true
+        fi
+        
+        echo "Gitleaks scan completed for ${{ matrix.solution }}"
+
+    - name: Aggregate security results
+      run: |
+        echo "Aggregating security results for ${{ matrix.solution }}..."
+        
+        mkdir -p security-results/${{ matrix.solution }}
+        
+        # Copy all security reports
+        if [ -f "${{ matrix.solution }}/bandit-sarif.json" ]; then
+          cp "${{ matrix.solution }}/bandit-sarif.json" security-results/${{ matrix.solution }}/
+        fi
+        
+        if [ -f "${{ matrix.solution }}/safety-report.json" ]; then
+          cp "${{ matrix.solution }}/safety-report.json" security-results/${{ matrix.solution }}/
+        fi
+        
+        if [ -f "${{ matrix.solution }}/npm-audit-report.json" ]; then
+          cp "${{ matrix.solution }}/npm-audit-report.json" security-results/${{ matrix.solution }}/
+        fi
+        
+        if [ -f "semgrep-sarif.json" ]; then
+          cp semgrep-sarif.json security-results/${{ matrix.solution }}/
+        fi
+        
+        if [ -f "semgrep-security-sarif.json" ]; then
+          cp semgrep-security-sarif.json security-results/${{ matrix.solution }}/
+        fi
+        
+        if [ -f "${{ matrix.solution }}/trivy-sarif.json" ]; then
+          cp "${{ matrix.solution }}/trivy-sarif.json" security-results/${{ matrix.solution }}/
+        fi
+        
+        if [ -f "gitleaks-report.json" ]; then
+          cp gitleaks-report.json security-results/${{ matrix.solution }}/
+        fi
+        
+        echo "Security results aggregated for ${{ matrix.solution }}"
+
+    - name: Generate security summary
+      run: |
+        python3 << 'EOF'
+        import json
+        import os
+        from pathlib import Path
+        
+        solution = "${{ matrix.solution }}"
+        results_dir = Path("security-results") / solution
+        
+        security_summary = {
+            "solution": solution,
+            "timestamp": os.environ.get('GITHUB_TIMESTAMP', ''),
+            "scans": {
+                "bandit": {"issues": 0, "critical": 0, "high": 0},
+                "safety": {"issues": 0, "critical": 0, "high": 0},
+                "npm_audit": {"issues": 0, "critical": 0, "high": 0},
+                "semgrep": {"issues": 0, "critical": 0, "high": 0},
+                "trivy": {"issues": 0, "critical": 0, "high": 0},
+                "gitleaks": {"issues": 0, "critical": 0, "high": 0}
+            },
+            "total_issues": 0,
+            "total_critical": 0,
+            "total_high": 0,
+            "security_score": 100
+        }
+        
+        # Parse Bandit results
+        if (results_dir / "bandit-sarif.json").exists():
+            try:
+                with open(results_dir / "bandit-sarif.json", 'r') as f:
+                    data = json.load(f)
+                issues = data.get('runs', [{}])[0].get('results', [])
+                security_summary["scans"]["bandit"]["issues"] = len(issues)
+                security_summary["scans"]["bandit"]["critical"] = len([i for i in issues if i.get('level', '') == 'error'])
+                security_summary["scans"]["bandit"]["high"] = len([i for i in issues if i.get('level', '') == 'warning'])
+            except:
+                pass
+        
+        # Parse Trivy results
+        if (results_dir / "trivy-sarif.json").exists():
+            try:
+                with open(results_dir / "trivy-sarif.json", 'r') as f:
+                    data = json.load(f)
+                issues = data.get('runs', [{}])[0].get('results', [])
+                security_summary["scans"]["trivy"]["issues"] = len(issues)
+                security_summary["scans"]["trivy"]["critical"] = len([i for i in issues if i.get('level', '') == 'error'])
+                security_summary["scans"]["trivy"]["high"] = len([i for i in issues if i.get('level', '') == 'warning'])
+            except:
+                pass
+        
+        # Calculate totals
+        for scan_name, scan_data in security_summary["scans"].items():
+            security_summary["total_issues"] += scan_data["issues"]
+            security_summary["total_critical"] += scan_data["critical"]
+            security_summary["total_high"] += scan_data["high"]
+        
+        # Calculate security score (0-100)
+        if security_summary["total_issues"] > 0:
+            critical_penalty = security_summary["total_critical"] * 10
+            high_penalty = security_summary["total_high"] * 5
+            total_penalty = critical_penalty + high_penalty
+            security_summary["security_score"] = max(0, 100 - total_penalty)
+        
+        # Save summary
+        with open(results_dir / "security-summary.json", 'w') as f:
+            json.dump(security_summary, f, indent=2)
+        
+        print(f"Security summary generated for {solution}")
+        print(f"Total issues: {security_summary['total_issues']}")
+        print(f"Security score: {security_summary['security_score']}")
+        EOF
+
+    - name: Upload security results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-results-${{ matrix.solution }}-${{ github.run_number }}
+        path: security-results/
+        retention-days: 30
+
+  performance-testing:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.performance-enabled == 'true'
+    
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.setup.outputs.solutions) }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install performance testing tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install locust pytest-benchmark matplotlib seaborn pandas
+        
+        # Install additional performance tools
+        npm install -g autocannon k6
+
+    - name: Start solution for testing
+      run: |
+        echo "Starting ${{ matrix.solution }} for performance testing..."
+        
+        # Start the solution in background
+        cd "${{ matrix.solution }}"
+        
+        case "${{ matrix.solution }}" in
+          "solution-http")
+            python -m src.main &
+            ;;
+          "solution-fastapi")
+            python app/main.py &
+            ;;
+          "solution-fastmcp")
+            python src/main.py &
+            ;;
+          "solution-typescript")
+            npm start &
+            ;;
+        esac
+        
+        # Store PID
+        echo $! > ../solution.pid
+        
+        # Wait for service to start
+        sleep 30
+        
+        cd ..
+        
+        echo "Solution started for testing"
+
+    - name: Run performance benchmarks
+      run: |
+        echo "Running performance benchmarks for ${{ matrix.solution }}..."
+        
+        # Run the performance benchmark script
+        python performance-tests/run_benchmarks.py \
+          --solution "${{ matrix.solution }}" \
+          --duration 60 \
+          --output "performance-results/${{ matrix.solution }}-benchmark.json" \
+          --compare \
+          --report
+
+    - name: Run load testing with Locust
+      run: |
+        echo "Running Locust load testing for ${{ matrix.solution }}..."
+        
+        # Create Locust test file
+        cat > locustfile.py << 'EOF'
+        from locust import HttpUser, task, between
+        import random
+        
+        class OpenProjectUser(HttpUser):
+            wait_time = between(1, 5)
+            
+            @task
+            def health_check(self):
+                self.client.get("/health")
+            
+            @task(3)
+            def get_projects(self):
+                self.client.get("/projects")
+            
+            @task(2)
+            def get_work_packages(self):
+                self.client.get("/work-packages")
+            
+            @task(1)
+            def create_report(self):
+                self.client.post("/reports", json={
+                    "type": "weekly",
+                    "project_id": random.randint(1, 100)
+                })
+        EOF
+        
+        # Run Locust test
+        locust --host=http://localhost:8010 \
+               --users=50 \
+               --spawn-rate=5 \
+               --run-time=2m \
+               --headless \
+               --html locust-report.html \
+               --csv locust-stats
+        
+        # Move results to solution-specific directory
+        mkdir -p performance-results/${{ matrix.solution }}
+        mv locust-report.html performance-results/${{ matrix.solution }}/
+        mv locust-stats* performance-results/${{ matrix.solution }}/ || true
+
+    - name: Run stress testing with k6
+      run: |
+        echo "Running k6 stress testing for ${{ matrix.solution }}..."
+        
+        # Create k6 test script
+        cat > k6-test.js << 'EOF'
+        import http from 'k6/http';
+        import { check, sleep } from 'k6';
+        
+        export let options = {
+            stages: [
+                { duration: '2m', target: 100 },
+                { duration: '5m', target: 100 },
+                { duration: '2m', target: 0 },
+            ],
+            thresholds: {
+                http_req_duration: ['p(95)<2000'],
+                http_req_failed: ['rate<0.1'],
+            },
+        };
+        
+        export default function () {
+            let responses = http.batch([
+                ['GET', 'http://localhost:8010/health'],
+                ['GET', 'http://localhost:8010/projects'],
+                ['GET', 'http://localhost:8010/work-packages'],
+            ]);
+            
+            check(responses[0], {
+                'status was 200': (r) => r.status == 200,
+            });
+            
+            sleep(1);
+        }
+        EOF
+        
+        # Run k6 test
+        k6 run k6-test.js --out json=k6-results.json
+        
+        # Move results to solution-specific directory
+        mkdir -p performance-results/${{ matrix.solution }}
+        mv k6-results.json performance-results/${{ matrix.solution }}/
+
+    - name: Stop solution
+      run: |
+        echo "Stopping ${{ matrix.solution }}..."
+        
+        if [ -f "solution.pid" ]; then
+          PID=$(cat solution.pid)
+          kill $PID 2>/dev/null || true
+          rm solution.pid
+        fi
+        
+        echo "Solution stopped"
+
+    - name: Analyze performance results
+      run: |
+        echo "Analyzing performance results for ${{ matrix.solution }}..."
+        
+        python3 << 'EOF'
+        import json
+        import os
+        from pathlib import Path
+        
+        solution = "${{ matrix.solution }}"
+        results_dir = Path("performance-results") / solution
+        
+        performance_summary = {
+            "solution": solution,
+            "timestamp": os.environ.get('GITHUB_TIMESTAMP', ''),
+            "metrics": {
+                "avg_response_time": 0,
+                "max_response_time": 0,
+                "min_response_time": 0,
+                "throughput": 0,
+                "error_rate": 0,
+                "p95_response_time": 0,
+                "p99_response_time": 0
+            },
+            "benchmarks": {},
+            "load_test": {},
+            "stress_test": {},
+            "performance_score": 0
+        }
+        
+        # Parse benchmark results
+        if (results_dir / f"{solution}-benchmark.json").exists():
+            try:
+                with open(results_dir / f"{solution}-benchmark.json", 'r') as f:
+                    benchmark_data = json.load(f)
+                
+                if 'solutions' in benchmark_data and solution in benchmark_data['solutions']:
+                    solution_data = benchmark_data['solutions'][solution]
+                    if 'metrics' in solution_data:
+                        metrics = solution_data['metrics']
+                        performance_summary["metrics"].update({
+                            "avg_response_time": metrics.get("avg_response_time", 0),
+                            "max_response_time": metrics.get("max_response_time", 0),
+                            "min_response_time": metrics.get("min_response_time", 0),
+                            "throughput": metrics.get("throughput", 0),
+                            "error_rate": metrics.get("error_rate", 0),
+                        })
+            except:
+                pass
+        
+        # Parse k6 results
+        if (results_dir / "k6-results.json").exists():
+            try:
+                with open(results_dir / "k6-results.json", 'r') as f:
+                    k6_data = json.load(f)
+                
+                # Extract k6 metrics
+                for metric in k6_data.get('metrics', {}):
+                    if metric.get('type') == 'trend':
+                        if 'http_req_duration' in metric.get('contains', ''):
+                            performance_summary["metrics"]["p95_response_time"] = metric.get('p(95)', 0)
+                            performance_summary["metrics"]["p99_response_time"] = metric.get('p(99)', 0)
+            except:
+                pass
+        
+        # Calculate performance score (0-100)
+        response_time = performance_summary["metrics"]["avg_response_time"]
+        throughput = performance_summary["metrics"]["throughput"]
+        error_rate = performance_summary["metrics"]["error_rate"]
+        
+        # Score components
+        response_time_score = max(0, 100 - (response_time / 10))  # Lower is better
+        throughput_score = min(100, throughput / 10)  # Higher is better
+        error_rate_score = max(0, 100 - (error_rate * 10))  # Lower is better
+        
+        # Weighted average
+        performance_summary["performance_score"] = round(
+            (response_time_score * 0.4 + throughput_score * 0.4 + error_rate_score * 0.2), 1
+        )
+        
+        # Save summary
+        with open(results_dir / "performance-summary.json", 'w') as f:
+            json.dump(performance_summary, f, indent=2)
+        
+        print(f"Performance summary generated for {solution}")
+        print(f"Performance score: {performance_summary['performance_score']}")
+        EOF
+
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-results-${{ matrix.solution }}-${{ github.run_number }}
+        path: performance-results/
+        retention-days: 30
+
+  integration-test:
+    name: Integration Testing
+    runs-on: ubuntu-latest
+    needs: [setup, security-scan, performance-testing]
+    if: needs.setup.outputs.test-type == 'full'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Run cross-solution integration tests
+      run: |
+        echo "Running cross-solution integration tests..."
+        
+        python test-utils/python/cross_solution_tester.py \
+          --environment "${{ needs.setup.outputs.environment }}" \
+          --test-type integration \
+          --duration 120 \
+          --report-file "integration-results/cross-solution-integration-${{ github.run_number }}.json"
+
+    - name: Run end-to-end tests
+      run: |
+        echo "Running end-to-end tests..."
+        
+        python test-utils/python/cross_solution_tester.py \
+          --environment "${{ needs.setup.outputs.environment }}" \
+          --test-type e2e \
+          --report-file "integration-results/e2e-test-${{ github.run_number }}.json"
+
+    - name: Upload integration results
+      uses: actions/upload-artifact@v3
+      with:
+        name: integration-results-${{ github.run_number }}
+        path: integration-results/
+        retention-days: 30
+
+  generate-report:
+    name: Generate Comprehensive Report
+    runs-on: ubuntu-latest
+    needs: [setup, security-scan, performance-testing, integration-test]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Download all results
+      run: |
+        mkdir -p all-results
+        
+        # Download security results
+        for solution in ${{ fromJson(needs.setup.outputs.solutions) }}; do
+          if [ -f "security-results/${solution}/security-summary.json" ]; then
+            cp security-results/${solution}/security-summary.json all-results/
+          fi
+        done
+        
+        # Download performance results
+        for solution in ${{ fromJson(needs.setup.outputs.solutions) }}; do
+          if [ -f "performance-results/${solution}/performance-summary.json" ]; then
+            cp performance-results/${solution}/performance-summary.json all-results/
+          fi
+        done
+        
+        # Download integration results
+        if [ -d "integration-results" ]; then
+          cp -r integration-results/* all-results/
+        fi
+
+    - name: Generate comprehensive report
+      run: |
+        echo "Generating comprehensive security and performance report..."
+        
+        python3 << 'EOF'
+        import json
+        import os
+        from datetime import datetime
+        from pathlib import Path
+        
+        # Generate comprehensive report
+        report = {
+            "timestamp": datetime.now().isoformat(),
+            "environment": "${{ needs.setup.outputs.environment }}",
+            "test_type": "${{ needs.setup.outputs.test-type }}",
+            "solutions": ${{ fromJson(needs.setup.outputs.solutions) }},
+            "security_summary": {},
+            "performance_summary": {},
+            "integration_summary": {},
+            "overall_assessment": {
+                "security_score": 0,
+                "performance_score": 0,
+                "overall_score": 0,
+                "recommendations": []
+            }
+        }
+        
+        # Aggregate security results
+        security_scores = []
+        for solution in ${{ fromJson(needs.setup.outputs.solutions) }}:
+            security_file = Path(f"all-results/security-summary.json")
+            if security_file.exists():
+                try:
+                    with open(security_file, 'r') as f:
+                        security_data = json.load(f)
+                    report["security_summary"][solution] = security_data
+                    security_scores.append(security_data.get("security_score", 0))
+                except:
+                    pass
+        
+        # Aggregate performance results
+        performance_scores = []
+        for solution in ${{ fromJson(needs.setup.outputs.solutions) }}:
+            performance_file = Path(f"all-results/performance-summary.json")
+            if performance_file.exists():
+                try:
+                    with open(performance_file, 'r') as f:
+                        performance_data = json.load(f)
+                    report["performance_summary"][solution] = performance_data
+                    performance_scores.append(performance_data.get("performance_score", 0))
+                except:
+                    pass
+        
+        # Calculate overall scores
+        if security_scores:
+            report["overall_assessment"]["security_score"] = round(sum(security_scores) / len(security_scores), 1)
+        
+        if performance_scores:
+            report["overall_assessment"]["performance_score"] = round(sum(performance_scores) / len(performance_scores), 1)
+        
+        # Calculate overall score
+        security_score = report["overall_assessment"]["security_score"]
+        performance_score = report["overall_assessment"]["performance_score"]
+        report["overall_assessment"]["overall_score"] = round((security_score + performance_score) / 2, 1)
+        
+        # Generate recommendations
+        if security_score < 80:
+            report["overall_assessment"]["recommendations"].append("Improve security posture by addressing identified vulnerabilities")
+        
+        if performance_score < 80:
+            report["overall_assessment"]["recommendations"].append("Optimize performance to improve response times and throughput")
+        
+        if report["overall_assessment"]["overall_score"] >= 90:
+            report["overall_assessment"]["status"] = "EXCELLENT"
+        elif report["overall_assessment"]["overall_score"] >= 80:
+            report["overall_assessment"]["status"] = "GOOD"
+        elif report["overall_assessment"]["overall_score"] >= 70:
+            report["overall_assessment"]["status"] = "FAIR"
+        else:
+            report["overall_assessment"]["status"] = "NEEDS_IMPROVEMENT"
+        
+        # Save comprehensive report
+        with open("comprehensive-security-performance-report.json", 'w') as f:
+            json.dump(report, f, indent=2)
+        
+        print("Comprehensive report generated successfully")
+        print(f"Overall Score: {report['overall_assessment']['overall_score']}")
+        print(f"Status: {report['overall_assessment']['status']}")
+        EOF
+
+    - name: Upload comprehensive report
+      uses: actions/upload-artifact@v3
+      with:
+        name: comprehensive-report-${{ github.run_number }}
+        path: comprehensive-security-performance-report.json
+        retention-days: 30
+
+    - name: Display summary
+      run: |
+        echo "=== Security and Performance Testing Summary ==="
+        
+        if [ -f "comprehensive-security-performance-report.json" ]; then
+          python3 -c "
+          import json
+          with open('comprehensive-security-performance-report.json', 'r') as f:
+              report = json.load(f)
+          
+          assessment = report['overall_assessment']
+          print(f'Overall Score: {assessment[\"overall_score\"]}%')
+          print(f'Security Score: {assessment[\"security_score\"]}%')
+          print(f'Performance Score: {assessment[\"performance_score\"]}%')
+          print(f'Status: {assessment[\"status\"]}')
+          
+          if assessment['recommendations']:
+              print('\\nRecommendations:')
+              for rec in assessment['recommendations']:
+                  print(f'  - {rec}')
+          "
+        fi

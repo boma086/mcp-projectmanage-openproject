@@ -1,0 +1,168 @@
+name: Container Registry Setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options: [setup, verify, cleanup]
+      registry:
+        description: 'Container registry'
+        required: false
+        default: 'ghcr.io'
+        type: choice
+        options: [ghcr.io, docker.io, registry.local]
+
+jobs:
+  setup-registry:
+    name: Setup Container Registry
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'setup'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ github.event.inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Verify registry access
+      run: |
+        echo "Verifying access to ${{ github.event.inputs.registry }}..."
+        docker pull alpine:latest
+        docker tag alpine:latest ${{ github.event.inputs.registry }}/${{ github.repository }}/test:latest
+        docker push ${{ github.event.inputs.registry }}/${{ github.repository }}/test:latest
+        docker rmi ${{ github.event.inputs.registry }}/${{ github.repository }}/test:latest
+        echo "Registry access verified successfully"
+
+    - name: Create registry configuration
+      run: |
+        mkdir -p container-registry
+        cat > container-registry/registry-config.json << EOF
+        {
+          "registry": "${{ github.event.inputs.registry }}",
+          "repository": "${{ github.repository }}",
+          "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "solutions": [
+            "solution-http",
+            "solution-fastapi", 
+            "solution-fastmcp",
+            "solution-typescript"
+          ],
+          "image_patterns": {
+            "develop": ["develop", "\${{ github.sha }}"],
+            "staging": ["staging", "candidate"],
+            "production": ["latest", "stable", "\${{ github.sha }}"]
+          }
+        }
+        EOF
+
+    - name: Upload registry configuration
+      uses: actions/upload-artifact@v3
+      with:
+        name: registry-config-${{ github.run_number }}
+        path: |
+          container-registry/
+        retention-days: 30
+
+  verify-registry:
+    name: Verify Registry Configuration
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'verify'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ github.event.inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Verify existing images
+      run: |
+        echo "Checking existing images in ${{ github.event.inputs.registry }}/${{ github.repository }}..."
+        
+        # Check if repository exists
+        if curl -s "https://${{ github.event.inputs.registry }}/v2/${{ github.repository }}/tags/list" | jq -r '.tags[]' 2>/dev/null; then
+          echo "Repository exists with tags:"
+          curl -s "https://${{ github.event.inputs.registry }}/v2/${{ github.repository }}/tags/list" | jq -r '.tags[]' | head -10
+        else
+          echo "Repository does not exist or is empty"
+        fi
+
+    - name: Test build and push
+      run: |
+        echo "Testing build and push workflow..."
+        
+        # Build a test image
+        docker build -t test-image - << EOF
+        FROM alpine:latest
+        RUN echo "Test image for registry verification"
+        CMD echo "Registry verification successful"
+        EOF
+        
+        # Tag and push
+        docker tag test-image ${{ github.event.inputs.registry }}/${{ github.repository }}/verification-test:${{ github.sha }}
+        docker push ${{ github.event.inputs.registry }}/${{ github.repository }}/verification-test:${{ github.sha }}
+        
+        # Clean up
+        docker rmi test-image ${{ github.event.inputs.registry }}/${{ github.repository }}/verification-test:${{ github.sha }}
+        
+        echo "Test build and push completed successfully"
+
+  cleanup-registry:
+    name: Cleanup Registry
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'cleanup'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ github.event.inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Cleanup test images
+      run: |
+        echo "Cleaning up test images from ${{ github.event.inputs.registry }}/${{ github.repository }}..."
+        
+        # List and remove test images
+        if curl -s "https://${{ github.event.inputs.registry }}/v2/${{ github.repository }}/tags/list" | jq -r '.tags[]' 2>/dev/null; then
+          TEST_IMAGES=$(curl -s "https://${{ github.event.inputs.registry }}/v2/${{ github.repository }}/tags/list" | jq -r '.tags[]' | grep -E '(test|verification|candidate)' || true)
+          
+          if [ -n "$TEST_IMAGES" ]; then
+            echo "Found test images to clean up:"
+            echo "$TEST_IMAGES"
+            
+            # Delete test images (this requires proper permissions)
+            for image in $TEST_IMAGES; do
+              echo "Deleting test image: $image"
+              # Note: Actual deletion requires registry API calls with proper authentication
+              # This is a placeholder for the actual cleanup logic
+            done
+          else
+            echo "No test images found to clean up"
+          fi
+        fi

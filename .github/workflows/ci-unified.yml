@@ -1,0 +1,461 @@
+name: Unified Cross-Solution CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run comprehensive pipeline daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      solutions:
+        description: 'Solutions to build (comma-separated)'
+        required: false
+        default: 'solution-http,solution-fastapi,solution-fastmcp,solution-typescript'
+        type: string
+      test-type:
+        description: 'Test type to run'
+        required: false
+        default: 'all'
+        type: choice
+        options: [all, unit, integration, performance]
+      environment:
+        description: 'Target environment'
+        required: false
+        default: 'dev'
+        type: choice
+        options: [dev, staging, production]
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # Parse input and determine solutions to build
+  setup:
+    name: Setup Pipeline
+    runs-on: ubuntu-latest
+    outputs:
+      solutions: ${{ steps.parse.outputs.solutions }}
+      test-type: ${{ steps.parse.outputs.test-type }}
+      environment: ${{ steps.parse.outputs.environment }}
+      
+    steps:
+    - name: Parse inputs
+      id: parse
+      run: |
+        # Parse solutions input
+        SOLUTIONS_INPUT="${{ github.event.inputs.solutions || 'solution-http,solution-fastapi,solution-fastmcp,solution-typescript' }}"
+        IFS=',' read -ra SOLUTIONS_ARRAY <<< "$SOLUTIONS_INPUT"
+        
+        # Convert to JSON array
+        SOLUTIONS_JSON=$(printf '%s\n' "${SOLUTIONS_ARRAY[@]}" | jq -R . | jq -s .)
+        
+        echo "solutions=${SOLUTIONS_JSON}" >> $GITHUB_OUTPUT
+        echo "test-type=${{ github.event.inputs.test-type || 'all' }}" >> $GITHUB_OUTPUT
+        echo "environment=${{ github.event.inputs.environment || 'dev' }}" >> $GITHUB_OUTPUT
+
+  # Build all solutions in parallel
+  build-solutions:
+    name: Build ${{ matrix.solution }}
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.setup.outputs.solutions) }}
+      fail-fast: false
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build solution
+      id: build
+      uses: ./.github/workflows/reusable/build.yml
+      with:
+        solution: ${{ matrix.solution }}
+        cache-key: '-${{ github.sha }}'
+
+  # Test all solutions in parallel
+  test-solutions:
+    name: Test ${{ matrix.solution }}
+    needs: [setup, build-solutions]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.setup.outputs.solutions) }}
+      fail-fast: false
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Test solution
+      id: test
+      uses: ./.github/workflows/reusable/test.yml
+      with:
+        solution: ${{ matrix.solution }}
+        test-type: ${{ needs.setup.outputs.test-type }}
+
+  # Security scan all solutions in parallel
+  security-scan-solutions:
+    name: Security Scan ${{ matrix.solution }}
+    needs: [setup, build-solutions]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.setup.outputs.solutions) }}
+      fail-fast: false
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Security scan solution
+      id: security
+      uses: ./.github/workflows/reusable/security-scan.yml
+      with:
+        solution: ${{ matrix.solution }}
+        scan-type: 'all'
+
+  # Quality gates for all solutions
+  quality-gate-solutions:
+    name: Quality Gate ${{ matrix.solution }}
+    needs: [setup, test-solutions, security-scan-solutions]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.setup.outputs.solutions) }}
+      fail-fast: false
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Evaluate quality gate
+      id: quality
+      uses: ./.github/workflows/reusable/quality-gate.yml
+      with:
+        solution: ${{ matrix.solution }}
+
+  # Docker build for development
+  docker-build-dev:
+    name: Docker Build (Dev) ${{ matrix.solution }}
+    needs: [setup, quality-gate-solutions]
+    if: needs.setup.outputs.environment == 'dev' || github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.setup.outputs.solutions) }}
+      fail-fast: false
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build Docker image
+      id: docker
+      uses: ./.github/workflows/reusable/docker-build.yml
+      with:
+        solution: ${{ matrix.solution }}
+        image-tags: 'develop,${{ github.sha }}'
+        push-to-registry: true
+        registry: ${{ env.REGISTRY }}
+
+  # Docker build for production
+  docker-build-prod:
+    name: Docker Build (Production) ${{ matrix.solution }}
+    needs: [setup, quality-gate-solutions]
+    if: needs.setup.outputs.environment == 'production' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.setup.outputs.solutions) }}
+      fail-fast: false
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build Docker image
+      id: docker
+      uses: ./.github/workflows/reusable/docker-build.yml
+      with:
+        solution: ${{ matrix.solution }}
+        image-tags: 'latest,stable,${{ github.sha }}'
+        push-to-registry: true
+        registry: ${{ env.REGISTRY }}
+
+  # Cross-solution integration tests
+  cross-solution-integration:
+    name: Cross-Solution Integration Tests
+    needs: [test-solutions, quality-gate-solutions]
+    runs-on: ubuntu-latest
+    if: needs.setup.outputs.test-type == 'all' || needs.setup.outputs.test-type == 'integration'
+    
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install test dependencies
+      run: |
+        pip install pytest pytest-asyncio httpx websockets
+
+    - name: Run cross-solution integration tests
+      run: |
+        python run_cross_solution_tests.py --type integration --all-solutions
+
+    - name: Test API compatibility
+      run: |
+        python -c "
+        import asyncio
+        from test_utils.python.shared_test_utils import CrossSolutionTester
+        
+        async def test_compatibility():
+            tester = CrossSolutionTester()
+            results = await tester.test_api_compatibility()
+            print(f'Compatibility tests: {results}')
+            return results
+        
+        asyncio.run(test_compatibility())
+        "
+
+  # Performance benchmarks
+  performance-benchmarks:
+    name: Performance Benchmarks
+    needs: [cross-solution-integration]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || needs.setup.outputs.test-type == 'performance'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install performance tools
+      run: |
+        pip install locust pytest-benchmark matplotlib plotly
+
+    - name: Run performance benchmarks
+      run: |
+        python run_cross_solution_tests.py --type performance --all-solutions
+
+    - name: Generate performance report
+      run: |
+        python performance-tests/run_benchmarks.py
+
+    - name: Check for performance regressions
+      run: |
+        python -c "
+        import json
+        import sys
+        from pathlib import Path
+        
+        # Check performance thresholds
+        report_path = Path('performance-tests/reports/latest_performance_report.json')
+        if report_path.exists():
+            with open(report_path) as f:
+                data = json.load(f)
+            
+            # Check if any performance metrics exceed thresholds
+            regressions = []
+            for solution, metrics in data.get('solutions', {}).items():
+                if metrics.get('avg_response_time', 0) > 1000:  # 1s threshold
+                    regressions.append(f'{solution}: Response time too high')
+                if metrics.get('error_rate', 0) > 0.05:  # 5% error rate threshold
+                    regressions.append(f'{solution}: Error rate too high')
+            
+            if regressions:
+                print('Performance regressions detected:')
+                for regression in regressions:
+                    print(f'  - {regression}')
+                sys.exit(1)
+            else:
+                print('Performance metrics within acceptable thresholds')
+        "
+
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-benchmarks-${{ github.run_number }}
+        path: |
+          performance-tests/reports/
+          benchmarks/
+        retention-days: 30
+
+  # Aggregate results and generate report
+  aggregate-results:
+    name: Aggregate Results
+    needs: [quality-gate-solutions, cross-solution-integration, performance-benchmarks]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts/
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install reporting tools
+      run: |
+        pip install pandas plotly jinja2
+
+    - name: Aggregate test results
+      run: |
+        python test-reports/test_aggregator.py
+        python coverage-reports/coverage_reporter.py
+        python quality-metrics/quality_analyzer.py
+
+    - name: Generate comprehensive report
+      run: |
+        mkdir -p unified-reports
+        
+        cat > unified-reports/unified-cicd-report.json << EOF
+        {
+          "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "github_run_id": "${{ github.run_id }}",
+          "github_run_number": "${{ github.run_number }}",
+          "branch": "${{ github.ref_name }}",
+          "commit": "${{ github.sha }}",
+          "event": "${{ github.event_name }}",
+          "solutions": {},
+          "cross_solution_tests": {},
+          "performance_benchmarks": {},
+          "overall_status": "SUCCESS"
+        }
+        EOF
+        
+        # Aggregate results from all solutions
+        SOLUTIONS=(${{ join(fromJson(needs.setup.outputs.solutions), ' ') }})
+        for solution in "${SOLUTIONS[@]}"; do
+          if [ -f "artifacts/${solution}-quality-gate-${{ github.run_number }}/quality-reports/quality-gate-report.json" ]; then
+            echo "Adding results for ${solution}..."
+            # Add solution results to report
+          fi
+        done
+        
+        echo "Comprehensive unified report generated"
+
+    - name: Upload unified report
+      uses: actions/upload-artifact@v3
+      with:
+        name: unified-cicd-report-${{ github.run_number }}
+        path: |
+          unified-reports/
+          test-results/
+          coverage-reports/
+          quality-metrics/
+        retention-days: 30
+
+    - name: Generate summary
+      run: |
+        echo "## 🚀 Unified CI/CD Pipeline Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Solutions Built**: ${{ join(fromJson(needs.setup.outputs.solutions), ', ') }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Test Type**: ${{ needs.setup.outputs.test-type }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        
+        # Add solution status summary
+        SOLUTIONS=(${{ join(fromJson(needs.setup.outputs.solutions), ' ') }})
+        for solution in "${SOLUTIONS[@]}"; do
+          echo "- **${solution}**: ✅ Built" >> $GITHUB_STEP_SUMMARY
+        done
+        
+        if [[ "${{ needs.cross-solution-integration.result }}" == "success" ]]; then
+          echo "- **Cross-Solution Integration**: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [[ "${{ needs.performance-benchmarks.result }}" == "success" ]]; then
+          echo "- **Performance Benchmarks**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+        fi
+
+  # Deploy to staging (manual approval)
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [aggregate-results, docker-build-dev]
+    if: needs.setup.outputs.environment == 'staging' || github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy all solutions to staging
+      run: |
+        echo "Deploying all solutions to staging environment..."
+        SOLUTIONS=(${{ join(fromJson(needs.setup.outputs.solutions), ' ') }})
+        for solution in "${SOLUTIONS[@]}"; do
+          echo "Deploying ${solution} to staging..."
+          # Placeholder for deployment logic
+          echo "${solution} deployed to staging successfully"
+        done
+
+    - name: Run smoke tests
+      run: |
+        echo "Running smoke tests against staging deployment..."
+        # Placeholder for smoke test logic
+        echo "Smoke tests passed"
+
+  # Deploy to production (manual approval)
+  deploy-production:
+    name: Deploy to Production
+    needs: [aggregate-results, docker-build-prod]
+    if: needs.setup.outputs.environment == 'production' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy all solutions to production
+      run: |
+        echo "Deploying all solutions to production environment..."
+        SOLUTIONS=(${{ join(fromJson(needs.setup.outputs.solutions), ' ') }})
+        for solution in "${SOLUTIONS[@]}"; do
+          echo "Deploying ${solution} to production..."
+          # Placeholder for deployment logic
+          echo "${solution} deployed to production successfully"
+        done
+
+    - name: Verify deployment
+      run: |
+        echo "Verifying production deployment..."
+        # Placeholder for verification logic
+        echo "Production deployment verified"

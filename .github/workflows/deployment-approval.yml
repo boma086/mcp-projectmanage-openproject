@@ -1,0 +1,453 @@
+name: Deployment Approval
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [staging, production]
+        default: staging
+      deployment-request-id:
+        description: 'Deployment request ID'
+        required: true
+        type: string
+      approvers:
+        description: 'Required approvers (comma-separated)'
+        required: false
+        type: string
+        default: ''
+      description:
+        description: 'Deployment description'
+        required: false
+        type: string
+        default: ''
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  validate-request:
+    name: Validate Deployment Request
+    runs-on: ubuntu-latest
+    outputs:
+      request-valid: ${{ steps.validate.outputs.request-valid }}
+      deployment-info: ${{ steps.validate.outputs.deployment-info }}
+      required-approvers: ${{ steps.validate.outputs.required-approvers }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Validate deployment request
+      id: validate
+      run: |
+        ENVIRONMENT="${{ github.event.inputs.environment }}"
+        REQUEST_ID="${{ github.event.inputs.deployment-request-id }}"
+        APPROVERS="${{ github.event.inputs.approvers }}"
+        DESCRIPTION="${{ github.event.inputs.description }}"
+        
+        echo "Validating deployment request..."
+        echo "Environment: $ENVIRONMENT"
+        echo "Request ID: $REQUEST_ID"
+        echo "Approvers: $APPROVERS"
+        
+        # Validate request ID format
+        if [[ ! "$REQUEST_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+          echo "❌ Invalid request ID format"
+          echo "request-valid=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
+        # Set environment-specific approvers
+        if [ -z "$APPROVERS" ]; then
+          case $ENVIRONMENT in
+            "staging")
+              REQUIRED_APPROVERS="${{ vars.STAGING_APPROVERS || 'admin,tech-lead' }}"
+              ;;
+            "production")
+              REQUIRED_APPROVERS="${{ vars.PRODUCTION_APPROVERS || 'admin,tech-lead,ops-lead' }}"
+              ;;
+            *)
+              REQUIRED_APPROVERS="admin"
+              ;;
+          esac
+        else
+          REQUIRED_APPROVERS="$APPROVERS"
+        fi
+        
+        # Get deployment information
+        DEPLOYMENT_INFO=$(python3 << EOF
+        import json
+        import os
+        from datetime import datetime
+        
+        # Check if deployment info file exists
+        info_file = "deployment-requests/${REQUEST_ID}.json"
+        deployment_info = {
+            "request_id": REQUEST_ID,
+            "environment": ENVIRONMENT,
+            "status": "pending_approval",
+            "created_at": datetime.now().isoformat(),
+            "created_by": "${{ github.actor }}",
+            "description": DESCRIPTION,
+            "required_approvers": REQUIRED_APPROVERS.split(','),
+            "approvals": [],
+            "rejections": [],
+            "build_info": {
+                "commit": "${{ github.sha }}",
+                "branch": "${{ github.ref_name }}",
+                "run_id": "${{ github.run_number }}"
+            }
+        }
+        
+        # Save deployment info
+        os.makedirs("deployment-requests", exist_ok=True)
+        with open(info_file, 'w') as f:
+            json.dump(deployment_info, f, indent=2)
+        
+        print(f"Deployment info saved to {info_file}")
+        print(f"deployment-info={json.dumps(deployment_info)}")
+        print(f"required-approvers={REQUIRED_APPROVERS}")
+        print("request-valid=true")
+        EOF
+        )
+        
+        echo "deployment-info=$DEPLOYMENT_INFO" >> $GITHUB_OUTPUT
+        echo "required-approvers=$REQUIRED_APPROVERS" >> $GITHUB_OUTPUT
+        echo "request-valid=true" >> $GITHUB_OUTPUT
+
+  create-approval-issue:
+    name: Create Approval Issue
+    runs-on: ubuntu-latest
+    needs: validate-request
+    if: needs.validate-request.outputs.request-valid == 'true'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Create approval issue
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const deploymentInfo = JSON.parse('${{ needs.validate-request.outputs.deployment-info }}');
+          const environment = '${{ github.event.inputs.environment }}';
+          const requestId = '${{ github.event.inputs.deployment-request-id }}';
+          const description = '${{ github.event.inputs.description }}';
+          
+          const issueTitle = `🚀 Deployment Approval Request - ${environment.toUpperCase()} [${requestId}]`;
+          
+          const issueBody = `
+          ## Deployment Approval Request
+          
+          **Environment**: \`${environment}\`
+          **Request ID**: \`${requestId}\`
+          **Requested by**: @${{ github.actor }}
+          **Created**: ${new Date().toISOString()}
+          
+          ### Description
+          ${description || 'No description provided'}
+          
+          ### Build Information
+          - **Commit**: \`${{ github.sha }}\`
+          - **Branch**: \`${{ github.ref_name }}\`
+          - **Workflow Run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }})
+          
+          ### Required Approvers
+          ${deploymentInfo.required_approvers.map(approver => `- @${approver.trim()}`).join('\n')}
+          
+          ### Approval Checklist
+          - [ ] Code review completed
+          - [ ] Tests passing
+          - [ ] Security scan passed
+          - [ ] Performance benchmarks acceptable
+          - [ ] Rollback plan documented
+          - [ ] Stakeholders notified
+          
+          ### Risk Assessment
+          - [ ] **Low Risk**: Routine deployment with minimal changes
+          - [ ] **Medium Risk**: Feature deployment with moderate changes
+          - [ ] **High Risk**: Major changes or database migrations
+          
+          ---
+          
+          ### Approval Process
+          1. **Required approvers** must approve this request
+          2. **Any approver** can request changes or reject
+          3. Once approved, the deployment will proceed automatically
+          
+          #### To Approve
+          Comment: \`/approve\`
+          
+          #### To Request Changes
+          Comment: \`/request-changes [reason]\`
+          
+          #### To Reject
+          Comment: \`/reject [reason]\`
+          
+          ---
+          
+          *This request will automatically expire in 7 days*
+          `;
+          
+          const labels = ['deployment', 'approval-request', environment];
+          
+          const issue = await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: issueTitle,
+            body: issueBody,
+            labels: labels
+          });
+          
+          console.log(`Created approval issue: #${issue.data.number}`);
+          
+          // Store issue number in deployment info
+          const fs = require('fs');
+          const path = require('path');
+          const deploymentInfoPath = path.join('deployment-requests', `${requestId}.json`);
+          
+          if (fs.existsSync(deploymentInfoPath)) {
+            const deploymentData = JSON.parse(fs.readFileSync(deploymentInfoPath, 'utf8'));
+            deploymentData.approval_issue_number = issue.data.number;
+            deploymentData.approval_issue_url = issue.data.html_url;
+            
+            fs.writeFileSync(deploymentInfoPath, JSON.stringify(deploymentData, null, 2));
+            console.log(`Updated deployment info with issue number: ${issue.data.number}`);
+          }
+          
+          // Set outputs
+          core.setOutput('issue-number', issue.data.number);
+          core.setOutput('issue-url', issue.data.html_url);
+
+    - name: Notify approvers
+      run: |
+        echo "📧 Notifying approvers of deployment request..."
+        echo "Issue URL: ${{ steps.create-approval-issue.outputs.issue-url }}"
+        
+        # In a real implementation, this would send emails or Slack notifications
+        echo "Notifications sent to: ${{ needs.validate-request.outputs.required-approvers }}"
+
+  wait-for-approval:
+    name: Wait for Approval
+    runs-on: ubuntu-latest
+    needs: [validate-request, create-approval-issue]
+    if: needs.validate-request.outputs.request-valid == 'true'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Wait for approval decision
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const issueNumber = ${{ steps.create-approval-issue.outputs.issue-number }};
+          const environment = '${{ github.event.inputs.environment }}';
+          const requestId = '${{ github.event.inputs.deployment-request-id }}';
+          const requiredApprovers = JSON.parse('${{ needs.validate-request.outputs.deployment-info }}').required_approvers;
+          
+          console.log(`Waiting for approval on issue #${issueNumber}`);
+          console.log(`Required approvers: ${requiredApprovers.join(', ')}`);
+          
+          // Poll for approval decision
+          const maxWaitTime = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+          const pollInterval = 2 * 60 * 1000; // 2 minutes
+          const startTime = Date.now();
+          
+          let approved = false;
+          let rejected = false;
+          let approvals = [];
+          let rejections = [];
+          
+          while (Date.now() - startTime < maxWaitTime) {
+            try {
+              // Get issue comments
+              const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber
+              });
+              
+              // Process comments for approval commands
+              for (const comment of comments.data) {
+                const body = comment.body.toLowerCase().trim();
+                const commenter = comment.user.login;
+                
+                if (body.startsWith('/approve')) {
+                  if (!approvals.includes(commenter) && requiredApprovers.includes(commenter)) {
+                    approvals.push(commenter);
+                    console.log(`✅ Approval received from @${commenter}`);
+                  }
+                } else if (body.startsWith('/reject')) {
+                  if (!rejections.includes(commenter)) {
+                    rejections.push(commenter);
+                    console.log(`❌ Rejection received from @${commenter}`);
+                    rejected = true;
+                  }
+                } else if (body.startsWith('/request-changes')) {
+                  console.log(`🔄 Changes requested by @${commenter}`);
+                  rejected = true;
+                }
+              }
+              
+              // Check if we have enough approvals
+              const approvalCount = approvals.length;
+              const requiredCount = requiredApprovers.length;
+              
+              console.log(`Current approvals: ${approvalCount}/${requiredCount}`);
+              
+              if (approvalCount >= requiredCount) {
+                approved = true;
+                break;
+              }
+              
+              if (rejected) {
+                break;
+              }
+              
+              // Wait before next poll
+              await new Promise(resolve => setTimeout(resolve, pollInterval));
+              
+            } catch (error) {
+              console.error('Error polling for approval:', error);
+              await new Promise(resolve => setTimeout(resolve, pollInterval));
+            }
+          }
+          
+          // Update deployment info
+          const fs = require('fs');
+          const path = require('path');
+          const deploymentInfoPath = path.join('deployment-requests', `${requestId}.json`);
+          
+          if (fs.existsSync(deploymentInfoPath)) {
+            const deploymentData = JSON.parse(fs.readFileSync(deploymentInfoPath, 'utf8'));
+            deploymentData.approvals = approvals;
+            deploymentData.rejections = rejections;
+            deploymentData.status = approved ? 'approved' : (rejected ? 'rejected' : 'expired');
+            deploymentData.decided_at = new Date().toISOString();
+            
+            fs.writeFileSync(deploymentInfoPath, JSON.stringify(deploymentData, null, 2));
+          }
+          
+          // Close the approval issue
+          await github.rest.issues.update({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: issueNumber,
+            state: 'closed'
+          });
+          
+          // Add decision comment
+          let decisionComment = '';
+          if (approved) {
+            decisionComment = `✅ **APPROVED** - Deployment authorized\n\nApproved by: ${approvals.map(a => `@${a}`).join(', ')}\n\nProceeding with deployment to ${environment}...`;
+          } else if (rejected) {
+            decisionComment = `❌ **REJECTED** - Deployment blocked\n\nRejected by: ${rejections.map(r => `@${r}`).join(', ')}\n\nPlease address concerns and submit a new request.`;
+          } else {
+            decisionComment = `⏰ **EXPIRED** - Deployment request expired\n\nNo decision received within 7 days.\n\nPlease submit a new request if deployment is still needed.`;
+          }
+          
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: issueNumber,
+            body: decisionComment
+          });
+          
+          // Set outputs
+          core.setOutput('approved', approved);
+          core.setOutput('rejected', rejected);
+          core.setOutput('expired', !approved && !rejected);
+          core.setOutput('approvals', approvals.join(','));
+          core.setOutput('rejections', rejections.join(','));
+
+    - name: Handle approval decision
+      run: |
+        if [ "${{ steps.wait-for-approval.outputs.approved }}" = "true" ]; then
+          echo "✅ Deployment approved"
+          echo "Approvals: ${{ steps.wait-for-approval.outputs.approvals }}"
+        elif [ "${{ steps.wait-for-approval.outputs.rejected }}" = "true" ]; then
+          echo "❌ Deployment rejected"
+          echo "Rejections: ${{ steps.wait-for-approval.outputs.rejections }}"
+          exit 1
+        else
+          echo "⏰ Deployment request expired"
+          exit 1
+        fi
+
+  trigger-deployment:
+    name: Trigger Deployment
+    runs-on: ubuntu-latest
+    needs: [validate-request, create-approval-issue, wait-for-approval]
+    if: needs.wait-for-approval.outputs.approved == 'true'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Trigger deployment workflow
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const environment = '${{ github.event.inputs.environment }}';
+          const requestId = '${{ github.event.inputs.deployment-request-id }}';
+          
+          console.log(`Triggering deployment to ${environment}...`);
+          
+          // Trigger the deployment workflow
+          await github.rest.actions.createWorkflowDispatch({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            workflow_id: 'deploy-environment.yml',
+            ref: '${{ github.ref_name }}',
+            inputs: {
+              environment: environment,
+              solution: 'all',
+              action: 'deploy'
+            }
+          });
+          
+          console.log('Deployment workflow triggered successfully');
+
+    - name: Update deployment status
+      run: |
+        echo "🚀 Deployment triggered successfully"
+        echo "Environment: ${{ github.event.inputs.environment }}"
+        echo "Request ID: ${{ github.event.inputs.deployment-request-id }}"
+        echo "Approvals: ${{ steps.wait-for-approval.outputs.approvals }}"
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [validate-request, create-approval-issue, wait-for-approval, trigger-deployment]
+    if: always()
+    
+    steps:
+    - name: Upload deployment request artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-request-${{ github.event.inputs.deployment-request-id }}
+        path: deployment-requests/
+        retention-days: 30
+
+    - name: Cleanup old deployment requests
+      run: |
+        echo "Cleaning up old deployment requests..."
+        
+        # Remove deployment requests older than 30 days
+        find deployment-requests -name "*.json" -mtime +30 -delete 2>/dev/null || true
+        
+        echo "Cleanup completed"

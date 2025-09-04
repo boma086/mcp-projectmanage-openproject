@@ -1,0 +1,420 @@
+name: Environment Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [development, staging, production]
+        default: staging
+      solution:
+        description: 'Solution to deploy (empty for all)'
+        required: false
+        type: choice
+        options: [all, solution-http, solution-fastapi, solution-fastmcp, solution-typescript]
+        default: all
+      action:
+        description: 'Deployment action'
+        required: true
+        type: choice
+        options: [deploy, verify, rollback]
+        default: deploy
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  setup:
+    name: Setup Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.setup.outputs.environment }}
+      solutions: ${{ steps.setup.outputs.solutions }}
+      kubernetes-config: ${{ steps.setup.outputs.kubernetes-config }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup deployment configuration
+      id: setup
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          SOLUTION="${{ github.event.inputs.solution }}"
+          ACTION="${{ github.event.inputs.action }}"
+        else
+          # Auto-deploy based on branch
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            ENVIRONMENT="production"
+          else
+            ENVIRONMENT="staging"
+          fi
+          SOLUTION="all"
+          ACTION="deploy"
+        fi
+        
+        echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+        echo "solutions=$SOLUTION" >> $GITHUB_OUTPUT
+        echo "kubernetes-config=true" >> $GITHUB_OUTPUT
+        
+        echo "Deployment configuration:"
+        echo "  Environment: $ENVIRONMENT"
+        echo "  Solution: $SOLUTION"
+        echo "  Action: $ACTION"
+
+  validate:
+    name: Validate Deployment
+    runs-on: ubuntu-latest
+    needs: setup
+    environment: ${{ needs.setup.outputs.environment }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Kubernetes
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Configure kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+
+    - name: Validate cluster connectivity
+      run: |
+        kubectl cluster-info
+        kubectl get nodes
+
+    - name: Validate environment configuration
+      run: |
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        ./scripts/deploy-env.sh "$ENVIRONMENT" config
+
+  build-and-push:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    needs: [setup, validate]
+    if: needs.setup.outputs.environment != 'development'
+    
+    strategy:
+      matrix:
+        solution: ['solution-http', 'solution-fastapi', 'solution-fastmcp', 'solution-typescript']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.solution }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=raw,value=${{ needs.setup.outputs.environment }}
+
+    - name: Build and push
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ matrix.solution }}
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Generate SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.solution }}:${{ needs.setup.outputs.environment }}
+        format: cyclonedx-json
+        output: sbom/${{ matrix.solution }}.sbom.json
+
+    - name: Upload SBOM
+      uses: actions/upload-artifact@v3
+      with:
+        name: sbom-${{ matrix.solution }}
+        path: sbom/${{ matrix.solution }}.sbom.json
+        retention-days: 30
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [setup, validate, build-and-push]
+    
+    strategy:
+      matrix:
+        solution: ['solution-http', 'solution-fastapi', 'solution-fastmcp', 'solution-typescript']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.solution }}:${{ needs.setup.outputs.environment }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  deploy:
+    name: Deploy to Environment
+    runs-on: ubuntu-latest
+    needs: [setup, validate, build-and-push, security-scan]
+    environment: ${{ needs.setup.outputs.environment }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Kubernetes
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Configure kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+
+    - name: Deploy to environment
+      run: |
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        ./scripts/deploy-env.sh "$ENVIRONMENT" deploy
+
+    - name: Verify deployment
+      run: |
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        ./scripts/deploy-env.sh "$ENVIRONMENT" verify
+
+    - name: Run integration tests
+      run: |
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}
+        python test-utils/python/cross_solution_tester.py \
+          --environment "$ENVIRONMENT" \
+          --test-type integration \
+          --report-file test-results/integration-${{ github.run_number }}.json
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results-${{ github.run_number }}
+        path: test-results/
+        retention-days: 30
+
+  monitor:
+    name: Monitor Deployment
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always() && needs.deploy.result == 'success'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup monitoring
+      run: |
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        echo "Setting up monitoring for $ENVIRONMENT"
+        
+        # Create monitoring dashboard configuration
+        cat > monitoring/dashboard-$ENVIRONMENT.json << EOF
+        {
+          "dashboard": {
+            "title": "OpenProject MCP - $ENVIRONMENT",
+            "panels": [
+              {
+                "title": "Request Rate",
+                "type": "graph",
+                "targets": [
+                  {
+                    "expr": "rate(http_requests_total[5m])",
+                    "legendFormat": "{{method}} {{status}}"
+                  }
+                ]
+              },
+              {
+                "title": "Response Time",
+                "type": "graph",
+                "targets": [
+                  {
+                    "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+                    "legendFormat": "95th percentile"
+                  }
+                ]
+              },
+              {
+                "title": "Error Rate",
+                "type": "graph",
+                "targets": [
+                  {
+                    "expr": "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m])",
+                    "legendFormat": "Error rate"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        EOF
+
+    - name: Deploy monitoring configuration
+      run: |
+        # This would deploy to your monitoring system (Prometheus, Grafana, etc.)
+        echo "Monitoring configuration deployed"
+
+  rollback:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    needs: [deploy, monitor]
+    if: failure() && needs.deploy.result == 'failure'
+    environment: ${{ needs.setup.outputs.environment }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Kubernetes
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Configure kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+
+    - name: Rollback deployment
+      run: |
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        echo "Rolling back deployment in $ENVIRONMENT"
+        ./scripts/deploy-env.sh "$ENVIRONMENT" rollback
+
+    - name: Notify rollback
+      run: |
+        echo "Deployment rolled back in $ENVIRONMENT"
+        # Add notification logic here (Slack, email, etc.)
+
+  # Environment-specific approval gates
+  production-gate:
+    name: Production Approval Gate
+    runs-on: ubuntu-latest
+    needs: [setup, validate, build-and-push, security-scan]
+    if: needs.setup.outputs.environment == 'production'
+    environment: production
+    
+    steps:
+    - name: Request approval
+      run: |
+        echo "Requesting approval for production deployment"
+        echo "Manual approval required for production environment"
+
+    - name: Wait for approval
+      uses: trstringer/manual-approval@v1
+      with:
+        secret: ${{ github.TOKEN }}
+        approvers: ${{ vars.PRODUCTION_APPROVERS }}
+        minimum-approvals: 1
+        issue-title: "Production Deployment Approval - ${{ github.run_number }}"
+        issue-body: |
+          ## Production Deployment Request
+          
+          **Run ID**: ${{ github.run_number }}
+          **Environment**: Production
+          **Branch**: ${{ github.ref_name }}
+          **Commit**: ${{ github.sha }}
+          
+          ### Changes
+          ${{ github.event.head_commit.message }}
+          
+          ### Approval Required
+          Please review and approve this production deployment.
+          
+          ### Security Checks
+          - [ ] Vulnerability scans passed
+          - [ ] Integration tests passed
+          - [ ] Performance benchmarks acceptable
+          
+          ### Risk Assessment
+          - [ ] Low risk deployment
+          - [ ] Medium risk deployment
+          - [ ] High risk deployment (requires additional approval)
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [setup, validate, build-and-push, security-scan, production-gate]
+    if: needs.setup.outputs.environment == 'production'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Kubernetes
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Configure kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+
+    - name: Deploy to production
+      run: |
+        ./scripts/deploy-env.sh production deploy
+
+    - name: Verify production deployment
+      run: |
+        ./scripts/deploy-env.sh production verify
+
+    - name: Run production smoke tests
+      run: |
+        python test-utils/python/cross_solution_tester.py \
+          --environment production \
+          --test-type smoke \
+          --report-file test-results/production-smoke-${{ github.run_number }}.json
+
+    - name: Final production checks
+      run: |
+        echo "Production deployment completed successfully"
+        echo "Monitoring and alerting activated"

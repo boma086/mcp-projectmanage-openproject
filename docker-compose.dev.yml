@@ -1,0 +1,311 @@
+version: '3.8'
+
+services:
+  # HTTP Solution (Port 8010)
+  http-solution:
+    build:
+      context: ./solution-http
+      dockerfile: Dockerfile
+    container_name: mcp-http
+    restart: unless-stopped
+    ports:
+      - "8010:8010"
+    environment:
+      - OPENPROJECT_URL=${OPENPROJECT_URL:-https://your-openproject.com}
+      - OPENPROJECT_API_KEY=${OPENPROJECT_API_KEY}
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./solution-http/logs:/app/logs
+      - ./shared-web:/app/shared-web:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # FastAPI Solution (Port 8020)
+  fastapi-solution:
+    build:
+      context: ./solution-fastapi
+      dockerfile: Dockerfile
+    container_name: mcp-fastapi
+    restart: unless-stopped
+    ports:
+      - "8020:8020"
+    environment:
+      - OPENPROJECT_URL=${OPENPROJECT_URL:-https://your-openproject.com}
+      - OPENPROJECT_API_KEY=${OPENPROJECT_API_KEY}
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://mcpuser:mcppass@postgres:5432/mcpdb
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - WORKERS=2
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./solution-fastapi/logs:/app/logs
+      - ./shared-web:/app/shared-web:ro
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '1.0'
+        reservations:
+          memory: 384M
+          cpus: '0.5'
+
+  # FastMCP Solution (Port 8030) - Development
+  fastmcp-solution:
+    build:
+      context: ./solution-fastmcp
+      dockerfile: Dockerfile
+    container_name: mcp-fastmcp
+    restart: unless-stopped
+    ports:
+      - "8030:8030"
+    environment:
+      - OPENPROJECT_URL=${OPENPROJECT_URL:-https://your-openproject.com}
+      - OPENPROJECT_API_KEY=${OPENPROJECT_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      - redis
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8030/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./solution-fastmcp/logs:/app/logs
+      - ./shared-web:/app/shared-web:ro
+    profiles:
+      - experimental
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # TypeScript Solution (Port 8040) - Development
+  typescript-solution:
+    build:
+      context: ./solution-typescript
+      dockerfile: Dockerfile
+    container_name: mcp-typescript
+    restart: unless-stopped
+    ports:
+      - "8040:8040"
+    environment:
+      - OPENPROJECT_URL=${OPENPROJECT_URL:-https://your-openproject.com}
+      - OPENPROJECT_API_KEY=${OPENPROJECT_API_KEY}
+      - NODE_ENV=development
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./solution-typescript/logs:/app/logs
+    profiles:
+      - experimental
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: mcp-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./solution-fastapi/redis.conf:/etc/redis/redis.conf:ro
+    command: redis-server /etc/redis/redis.conf
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.2'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: mcp-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=mcpdb
+      - POSTGRES_USER=mcpuser
+      - POSTGRES_PASSWORD=mcppass
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data/pgdata:/var/lib/postgresql/data
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcpuser -d mcpdb"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Nginx Load Balancer (Optional)
+  nginx:
+    image: nginx:alpine
+    container_name: mcp-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./solution-fastapi/nginx/conf.d:/etc/nginx/conf.d/fastapi:ro
+      - ./shared-web:/usr/share/nginx/html:ro
+    depends_on:
+      - http-solution
+      - fastapi-solution
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - production
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.2'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mcp-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./solution-fastapi/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - monitoring
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mcp-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./solution-fastapi/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./solution-fastapi/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - monitoring
+
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  mcp-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

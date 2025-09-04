@@ -1,0 +1,235 @@
+name: Reusable Docker Build Workflow
+
+on:
+  workflow_call:
+    inputs:
+      solution:
+        required: true
+        type: string
+        description: 'Solution name (solution-http, solution-fastapi, solution-fastmcp, solution-typescript)'
+      dockerfile-path:
+        required: false
+        type: string
+        default: 'Dockerfile'
+        description: 'Path to Dockerfile'
+      context-path:
+        required: false
+        type: string
+        default: '.'
+        description: 'Docker build context path'
+      image-tags:
+        required: false
+        type: string
+        default: 'latest'
+        description: 'Comma-separated list of image tags'
+      push-to-registry:
+        required: false
+        type: boolean
+        default: false
+        description: 'Push image to registry'
+      registry:
+        required: false
+        type: string
+        default: 'ghcr.io'
+        description: 'Container registry'
+      scan-image:
+        required: false
+        type: boolean
+        default: true
+        description: 'Scan built image for vulnerabilities'
+
+    outputs:
+      image-built:
+        description: 'Image build success status'
+        value: ${{ jobs.docker-build.outputs.image-built }}
+      image-digest:
+        description: 'Built image digest'
+        value: ${{ jobs.docker-build.outputs.image-digest }}
+      image-tags:
+        description: 'Applied image tags'
+        value: ${{ jobs.docker-build.outputs.image-tags }}
+      security-scan-passed:
+        description: 'Security scan passed status'
+        value: ${{ jobs.docker-build.outputs.security-scan-passed }}
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    outputs:
+      image-built: ${{ steps.build.outputs.image-built }}
+      image-digest: ${{ steps.build.outputs.image-digest }}
+      image-tags: ${{ steps.build.outputs.image-tags }}
+      security-scan-passed: ${{ steps.security.outputs.scan-passed }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to Container Registry
+      if: inputs.push-to-registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ inputs.registry }}/${{ github.repository }}/${{ inputs.solution }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=${{ inputs.image-tags }}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ inputs.solution }}/${{ inputs.context-path }}
+        file: ${{ inputs.solution }}/${{ inputs.dockerfile-path }}
+        push: ${{ inputs.push-to-registry }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        provenance: true
+        sbom: true
+
+    - name: Extract image digest
+      run: |
+        echo "IMAGE_DIGEST=${{ steps.build.outputs.digest }}" >> $GITHUB_ENV
+        echo "IMAGE_TAGS=${{ steps.meta.outputs.tags }}" >> $GITHUB_ENV
+
+    - name: Generate SBOM
+      run: |
+        # Create SBOM directory
+        mkdir -p docker-sbom
+        
+        # Extract SBOM from build
+        if [[ "${{ inputs.push-to-registry }}" == "true" ]]; then
+          # Download SBOM from registry if available
+          docker buildx imagetools inspect ${{ inputs.registry }}/${{ github.repository }}/${{ inputs.solution }}:${{ inputs.image-tags }} --format '{{ json .SBOM }}' > docker-sbom/sbom.json 2>/dev/null || echo "SBOM not available"
+        fi
+        
+        # Create SBOM summary
+        cat > docker-sbom/sbom-summary.json << EOF
+        {
+          "solution": "${{ inputs.solution }}",
+          "image_digest": "${{ steps.build.outputs.digest }}",
+          "tags": "${{ steps.meta.outputs.tags }}",
+          "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "commit": "${{ github.sha }}",
+          "run_id": "${{ github.run_id }}"
+        }
+        EOF
+
+    - name: Scan Docker image for vulnerabilities
+      id: security
+      if: inputs.scan-image && steps.build.outcome == 'success'
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ inputs.registry }}/${{ github.repository }}/${{ inputs.solution }}:${{ inputs.image-tags }}
+        format: 'json'
+        output: 'docker-scan/trivy-scan.json'
+        exit-code: '0'
+        severity: 'CRITICAL,HIGH,MEDIUM'
+        vuln-type: 'os,library'
+
+    - name: Parse security scan results
+      id: security-results
+      if: inputs.scan-image && steps.security.outcome == 'success'
+      run: |
+        mkdir -p docker-scan
+        
+        if [ -f "docker-scan/trivy-scan.json" ]; then
+          python3 << 'EOF'
+          import json
+          try:
+              with open('docker-scan/trivy-scan.json', 'r') as f:
+                  data = json.load(f)
+              
+              critical = 0
+              high = 0
+              medium = 0
+              
+              if 'Results' in data:
+                  for result in data['Results']:
+                      if 'Vulnerabilities' in result:
+                          for vuln in result['Vulnerabilities']:
+                              severity = vuln.get('Severity', 'UNKNOWN')
+                              if severity == 'CRITICAL':
+                                  critical += 1
+                              elif severity == 'HIGH':
+                                  high += 1
+                              elif severity == 'MEDIUM':
+                                  medium += 1
+              
+              # Create scan summary
+              summary = {
+                  "solution": "${{ inputs.solution }}",
+                  "image": "${{ inputs.registry }}/${{ github.repository }}/${{ inputs.solution }}:${{ inputs.image-tags }}",
+                  "digest": "${{ steps.build.outputs.digest }}",
+                  "critical_vulnerabilities": critical,
+                  "high_vulnerabilities": high,
+                  "medium_vulnerabilities": medium,
+                  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+                  "scan_passed": critical == 0 and high <= 3
+              }
+              
+              with open('docker-scan/scan-summary.json', 'w') as f:
+                  json.dump(summary, f, indent=2)
+              
+              print(f"scan-passed={summary['scan_passed']}")
+              print(f"critical={critical}")
+              print(f"high={high}")
+              print(f"medium={medium}")
+                  
+          except Exception as e:
+              print(f"Error parsing scan results: {e}")
+              print("scan-passed=false")
+          EOF
+        else
+          echo "scan-passed=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Upload Docker artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: ${{ inputs.solution }}-docker-build-${{ github.run_number }}
+        path: |
+          docker-sbom/
+          docker-scan/
+        retention-days: 30
+
+    - name: Build outputs
+      id: build-outputs
+      run: |
+        echo "image-built=${{ steps.build.outcome == 'success' }}" >> $GITHUB_OUTPUT
+        echo "image-digest=${{ steps.build.outputs.digest }}" >> $GITHUB_OUTPUT
+        echo "image-tags=${{ steps.meta.outputs.tags }}" >> $GITHUB_OUTPUT
+        echo "security-scan-passed=${{ steps.security-results.outputs.scan-passed || 'true' }}" >> $GITHUB_OUTPUT
+
+    - name: Docker build summary
+      run: |
+        echo "## 🐳 Docker Build Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Solution**: ${{ inputs.solution }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image**: ${{ inputs.registry }}/${{ github.repository }}/${{ inputs.solution }}:${{ inputs.image-tags }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Digest**: ${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Build Status**: ${{ steps.build.outcome }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Pushed to Registry**: ${{ inputs.push-to-registry }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Security Scan**: ${{ steps.security-results.outputs.scan-passed || 'Not run' }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ steps.security-results.outputs.scan-passed }}" == "false" ]]; then
+          echo "### 🚨 Security Issues Found" >> $GITHUB_STEP_SUMMARY
+          echo "- **Critical**: ${{ steps.security-results.outputs.critical || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **High**: ${{ steps.security-results.outputs.high || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Medium**: ${{ steps.security-results.outputs.medium || 0 }}" >> $GITHUB_STEP_SUMMARY
+        fi

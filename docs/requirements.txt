@@ -1,0 +1,17 @@
+# Documentation generation requirements
+mkdocs>=1.5.0
+mkdocs-material>=9.0.0
+mkdocs-mermaid2-plugin>=1.0.0
+mkdocs-minify-plugin>=0.7.0
+mkdocs-git-revision-date-localized-plugin>=1.2.0
+mkdocs-section-index>=0.3.0
+mkdocs-literate-nav-plugin>=0.6.0
+mkdocs-gen-files>=0.5.0
+mkdocs-awesome-pages-source>=0.9.0
+pymdown-extensions>=10.0.0
+Pygments>=2.15.0
+jinja2>=3.1.0
+pyyaml>=6.0.0
+requests>=2.28.0
+click>=8.0.0
+python-dotenv>=1.0.0

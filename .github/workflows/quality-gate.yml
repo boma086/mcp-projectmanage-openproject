@@ -1,0 +1,484 @@
+name: Quality Gate
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: string
+      test-results-path:
+        description: 'Path to test results'
+        required: false
+        type: string
+        default: 'test-results'
+      coverage-threshold:
+        description: 'Minimum coverage percentage'
+        required: false
+        type: number
+        default: 80
+      security-threshold:
+        description: 'Maximum allowed security issues'
+        required: false
+        type: number
+        default: 0
+      performance-threshold:
+        description: 'Maximum response time in ms'
+        required: false
+        type: number
+        default: 1000
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [development, staging, production]
+        default: staging
+      test-results-path:
+        description: 'Path to test results'
+        required: false
+        type: string
+        default: 'test-results'
+      coverage-threshold:
+        description: 'Minimum coverage percentage'
+        required: false
+        type: number
+        default: 80
+      security-threshold:
+        description: 'Maximum allowed security issues'
+        required: false
+        type: number
+        default: 0
+      performance-threshold:
+        description: 'Maximum response time in ms'
+        required: false
+        type: number
+        default: 1000
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  quality-gate:
+    name: Quality Gate Assessment
+    runs-on: ubuntu-latest
+    outputs:
+      quality-score: ${{ steps.assessment.outputs.quality-score }}
+      quality-status: ${{ steps.assessment.outputs.quality-status }}
+      test-coverage: ${{ steps.assessment.outputs.test-coverage }}
+      security-issues: ${{ steps.assessment.outputs.security-issues }}
+      performance-score: ${{ steps.assessment.outputs.performance-score }}
+      gate-passed: ${{ steps.assessment.outputs.gate-passed }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download test results
+      uses: actions/download-artifact@v3
+      with:
+        name: test-results
+        path: ${{ inputs.test-results-path }}
+
+    - name: Download security scan results
+      uses: actions/download-artifact@v3
+      with:
+        name: security-results
+        path: security-results
+
+    - name: Download performance results
+      uses: actions/download-artifact@v3
+      with:
+        name: performance-results
+        path: performance-results
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest coverage pyyaml jsonschema
+
+    - name: Assess quality metrics
+      id: assessment
+      run: |
+        ENVIRONMENT="${{ inputs.environment }}"
+        COVERAGE_THRESHOLD="${{ inputs.coverage-threshold }}"
+        SECURITY_THRESHOLD="${{ inputs.security-threshold }}"
+        PERFORMANCE_THRESHOLD="${{ inputs.performance-threshold }}"
+        
+        echo "Assessing quality for $ENVIRONMENT environment"
+        
+        # Initialize variables
+        COVERAGE_PERCENTAGE=0
+        SECURITY_ISSUES=0
+        PERFORMANCE_SCORE=0
+        TESTS_PASSED=0
+        TESTS_FAILED=0
+        QUALITY_SCORE=0
+        GATE_PASSED=true
+        
+        # Check test coverage
+        if [ -f "${{ inputs.test-results-path }}/coverage.xml" ]; then
+          COVERAGE_PERCENTAGE=$(python3 -c "
+          import xml.etree.ElementTree as ET
+          try:
+              tree = ET.parse('${{ inputs.test-results-path }}/coverage.xml')
+              root = tree.getroot()
+              line_rate = float(root.get('line-rate', '0'))
+              print(f'{line_rate * 100:.1f}')
+          except:
+              print('0')
+          ")
+          echo "Test coverage: $COVERAGE_PERCENTAGE%"
+        fi
+        
+        # Check security issues
+        if [ -f "security-results/trivy-results.sarif" ]; then
+          SECURITY_ISSUES=$(python3 -c "
+          import json
+          try:
+              with open('security-results/trivy-results.sarif', 'r') as f:
+                  data = json.load(f)
+              critical_high = len([r for r in data.get('runs', [])[0].get('results', []) 
+                                 if r.get('level', '') in ['error', 'warning']])
+              print(critical_high)
+          except:
+              print('0')
+          ")
+          echo "Security issues found: $SECURITY_ISSUES"
+        fi
+        
+        # Check performance metrics
+        if [ -f "performance-results/benchmark.json" ]; then
+          PERFORMANCE_SCORE=$(python3 -c "
+          import json
+          try:
+              with open('performance-results/benchmark.json', 'r') as f:
+                  data = json.load(f)
+              avg_response = data.get('average_response_time', 0)
+              throughput = data.get('throughput', 0)
+              # Normalize performance score (0-100)
+              score = max(0, 100 - (avg_response / 10))
+              print(f'{score:.1f}')
+          except:
+              print('0')
+          ")
+          echo "Performance score: $PERFORMANCE_SCORE"
+        fi
+        
+        # Check test results
+        if [ -f "${{ inputs.test-results-path }}/test-summary.json" ]; then
+          TESTS_PASSED=$(python3 -c "
+          import json
+          try:
+              with open('${{ inputs.test-results-path }}/test-summary.json', 'r') as f:
+                  data = json.load(f)
+              print(data.get('passed_tests', 0))
+          except:
+              print('0')
+          ")
+          
+          TESTS_FAILED=$(python3 -c "
+          import json
+          try:
+              with open('${{ inputs.test-results-path }}/test-summary.json', 'r') as f:
+                  data = json.load(f)
+              print(data.get('failed_tests', 0))
+          except:
+              print('0')
+          ")
+          echo "Tests passed: $TESTS_PASSED, failed: $TESTS_FAILED"
+        fi
+        
+        # Calculate quality score (0-100)
+        python3 << 'EOF'
+        import os
+        import json
+        
+        # Get values
+        coverage = float(os.getenv('COVERAGE_PERCENTAGE', '0'))
+        security_issues = int(os.getenv('SECURITY_ISSUES', '0'))
+        performance_score = float(os.getenv('PERFORMANCE_SCORE', '0'))
+        tests_passed = int(os.getenv('TESTS_PASSED', '0'))
+        tests_failed = int(os.getenv('TESTS_FAILED', '0'))
+        
+        # Environment-specific thresholds
+        env = os.getenv('ENVIRONMENT', 'staging')
+        coverage_threshold = float(os.getenv('COVERAGE_THRESHOLD', '80'))
+        security_threshold = int(os.getenv('SECURITY_THRESHOLD', '0'))
+        performance_threshold = float(os.getenv('PERFORMANCE_THRESHOLD', '1000'))
+        
+        # Calculate component scores
+        coverage_score = min(coverage, 100) * 0.3  # 30% weight
+        security_score = max(0, 100 - (security_issues * 20)) * 0.3  # 30% weight
+        performance_score_normalized = min(performance_score, 100) * 0.2  # 20% weight
+        
+        # Test success score
+        total_tests = tests_passed + tests_failed
+        test_score = (tests_passed / total_tests * 100) if total_tests > 0 else 0
+        test_score = test_score * 0.2  # 20% weight
+        
+        # Overall quality score
+        quality_score = coverage_score + security_score + performance_score_normalized + test_score
+        quality_score = round(quality_score, 1)
+        
+        # Determine gate status
+        gate_passed = (
+            coverage >= coverage_threshold and
+            security_issues <= security_threshold and
+            performance_score >= 50 and  # Minimum acceptable performance
+            (tests_failed == 0 or (tests_failed / total_tests <= 0.05 if total_tests > 0 else True))
+        )
+        
+        # Output results
+        print(f"quality-score={quality_score}")
+        print(f"quality-status={'PASS' if gate_passed else 'FAIL'}")
+        print(f"test-coverage={coverage}")
+        print(f"security-issues={security_issues}")
+        print(f"performance-score={performance_score}")
+        print(f"gate-passed={gate_passed}")
+        
+        # Write quality report
+        report = {
+            'timestamp': os.environ.get('GITHUB_TIMESTAMP', ''),
+            'environment': env,
+            'quality_score': quality_score,
+            'gate_status': 'PASS' if gate_passed else 'FAIL',
+            'metrics': {
+                'test_coverage': coverage,
+                'security_issues': security_issues,
+                'performance_score': performance_score,
+                'tests_passed': tests_passed,
+                'tests_failed': tests_failed
+            },
+            'thresholds': {
+                'coverage_threshold': coverage_threshold,
+                'security_threshold': security_threshold,
+                'performance_threshold': performance_threshold
+            },
+            'recommendations': []
+        }
+        
+        # Generate recommendations
+        if coverage < coverage_threshold:
+            report['recommendations'].append(f'Increase test coverage from {coverage}% to at least {coverage_threshold}%')
+        
+        if security_issues > security_threshold:
+            report['recommendations'].append(f'Resolve {security_issues} security issues')
+        
+        if performance_score < 50:
+            report['recommendations'].append('Improve performance metrics')
+        
+        if tests_failed > 0:
+            report['recommendations'].append(f'Fix {tests_failed} failing tests')
+        
+        # Save report
+        with open('quality-report.json', 'w') as f:
+            json.dump(report, f, indent=2)
+        
+        print("Quality assessment completed")
+        EOF
+        
+        # Export outputs
+        echo "quality-score=$QUALITY_SCORE" >> $GITHUB_OUTPUT
+        echo "quality-status=$QUALITY_STATUS" >> $GITHUB_OUTPUT
+        echo "test-coverage=$COVERAGE_PERCENTAGE" >> $GITHUB_OUTPUT
+        echo "security-issues=$SECURITY_ISSUES" >> $GITHUB_OUTPUT
+        echo "performance-score=$PERFORMANCE_SCORE" >> $GITHUB_OUTPUT
+        echo "gate-passed=$GATE_PASSED" >> $GITHUB_OUTPUT
+
+    - name: Upload quality report
+      uses: actions/upload-artifact@v3
+      with:
+        name: quality-report-${{ github.run_number }}
+        path: quality-report.json
+        retention-days: 30
+
+    - name: Generate quality badge
+      run: |
+        python3 << 'EOF'
+        import os
+        from datetime import datetime
+        
+        quality_score = float(os.getenv('QUALITY_SCORE', '0'))
+        gate_passed = os.getenv('GATE_PASSED', 'false') == 'true'
+        environment = os.getenv('ENVIRONMENT', 'staging')
+        
+        # Determine badge color
+        if quality_score >= 90:
+            color = 'brightgreen'
+        elif quality_score >= 80:
+            color = 'green'
+        elif quality_score >= 70:
+            color = 'yellowgreen'
+        elif quality_score >= 60:
+            color = 'yellow'
+        elif quality_score >= 50:
+            color = 'orange'
+        else:
+            color = 'red'
+        
+        if not gate_passed:
+            color = 'red'
+        
+        # Create badge
+        badge_text = f"Quality: {quality_score:.0f}%"
+        if not gate_passed:
+            badge_text = f"Quality: FAIL"
+        
+        badge_url = f"https://img.shields.io/badge/{badge_text.replace(' ', '_')}-{color}"
+        
+        print(f"Quality badge: {badge_url}")
+        print(f"quality-badge-url={badge_url}" >> $GITHUB_OUTPUT
+        EOF
+
+    - name: Quality gate decision
+      if: steps.assessment.outputs.gate-passed != 'true'
+      run: |
+        echo "❌ QUALITY GATE FAILED"
+        echo "Quality Score: ${{ steps.assessment.outputs.quality-score }}%"
+        echo "Test Coverage: ${{ steps.assessment.outputs.test-coverage }}%"
+        echo "Security Issues: ${{ steps.assessment.outputs.security-issues }}"
+        echo "Performance Score: ${{ steps.assessment.outputs.performance-score }}"
+        echo ""
+        echo "Thresholds:"
+        echo "  Coverage: ${{ inputs.coverage-threshold }}%"
+        echo "  Security Issues: ${{ inputs.security-threshold }}"
+        echo "  Performance: ${{ inputs.performance-threshold }}ms"
+        exit 1
+
+    - name: Quality gate passed
+      if: steps.assessment.outputs.gate-passed == 'true'
+      run: |
+        echo "✅ QUALITY GATE PASSED"
+        echo "Quality Score: ${{ steps.assessment.outputs.quality-score }}%"
+        echo "Test Coverage: ${{ steps.assessment.outputs.test-coverage }}%"
+        echo "Security Issues: ${{ steps.assessment.outputs.security-issues }}"
+        echo "Performance Score: ${{ steps.assessment.outputs.performance-score }}"
+
+  # Environment-specific quality gates
+  production-quality-gate:
+    name: Production Quality Gate
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    if: inputs.environment == 'production'
+    
+    steps:
+    - name: Enhanced production checks
+      run: |
+        echo "Running enhanced production quality checks..."
+        
+        # Additional production-specific checks
+        python3 << 'EOF'
+        import os
+        import json
+        
+        quality_score = float(os.getenv('QUALITY_SCORE', '0'))
+        test_coverage = float(os.getenv('TEST_COVERAGE', '0'))
+        security_issues = int(os.getenv('SECURITY_ISSUES', '0'))
+        
+        # Production requirements (stricter)
+        production_requirements = {
+            'min_quality_score': 85,
+            'min_coverage': 85,
+            'max_security_issues': 0,
+            'required_tests': 100
+        }
+        
+        # Check production requirements
+        checks_passed = 0
+        total_checks = len(production_requirements)
+        
+        if quality_score >= production_requirements['min_quality_score']:
+            checks_passed += 1
+            print(f"✅ Quality score requirement met: {quality_score}% >= {production_requirements['min_quality_score']}%")
+        else:
+            print(f"❌ Quality score requirement failed: {quality_score}% < {production_requirements['min_quality_score']}%")
+        
+        if test_coverage >= production_requirements['min_coverage']:
+            checks_passed += 1
+            print(f"✅ Coverage requirement met: {test_coverage}% >= {production_requirements['min_coverage']}%")
+        else:
+            print(f"❌ Coverage requirement failed: {test_coverage}% < {production_requirements['min_coverage']}%")
+        
+        if security_issues <= production_requirements['max_security_issues']:
+            checks_passed += 1
+            print(f"✅ Security requirement met: {security_issues} issues <= {production_requirements['max_security_issues']}")
+        else:
+            print(f"❌ Security requirement failed: {security_issues} issues > {production_requirements['max_security_issues']}")
+        
+        # Overall production gate decision
+        production_gate_passed = checks_passed == total_checks
+        
+        print(f"\nProduction Quality Gate: {'PASSED' if production_gate_passed else 'FAILED'}")
+        print(f"Checks passed: {checks_passed}/{total_checks}")
+        
+        if not production_gate_passed:
+            print("\n🚨 PRODUCTION DEPLOYMENT BLOCKED - Quality requirements not met")
+            exit(1)
+        
+        print("\n🎉 Production quality gate passed - Deployment approved")
+        EOF
+
+  notify:
+    name: Notify Quality Results
+    runs-on: ubuntu-latest
+    needs: [quality-gate, production-quality-gate]
+    if: always()
+    
+    steps:
+    - name: Download quality report
+      uses: actions/download-artifact@v3
+      with:
+        name: quality-report-${{ github.run_number }}
+        path: .
+
+    - name: Generate notification
+      run: |
+        if [ -f "quality-report.json" ]; then
+          python3 -c "
+          import json
+          import os
+          
+          with open('quality-report.json', 'r') as f:
+              report = json.load(f)
+          
+          quality_score = report['quality_score']
+          gate_status = report['gate_status']
+          environment = report['environment']
+          recommendations = report.get('recommendations', [])
+          
+          print('## Quality Gate Results')
+          print(f'**Environment**: {environment}')
+          print(f'**Quality Score**: {quality_score}%')
+          print(f'**Gate Status**: {gate_status}')
+          print('')
+          
+          if recommendations:
+              print('**Recommendations**:')
+              for rec in recommendations:
+                  print(f'- {rec}')
+              print('')
+          
+          if gate_status == 'PASS':
+              print('✅ Deployment quality requirements met')
+          else:
+              print('❌ Deployment blocked by quality gate')
+          "
+        fi
+
+    - name: Set workflow status
+      run: |
+        if [ "${{ needs.quality-gate.outputs.gate-passed }}" = "true" ]; then
+          echo "✅ Quality gate passed - workflow successful"
+        else
+          echo "❌ Quality gate failed - workflow blocked"
+          exit 1
+        fi

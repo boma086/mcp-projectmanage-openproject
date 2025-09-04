@@ -1,0 +1,249 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "MCP OpenProject - Unified Overview",
+    "tags": ["mcp", "openproject", "unified"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Status Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "health_check_status{check_type=\"service\", service=~\".*\"}",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "options": {
+                  "0": {
+                    "text": "Unhealthy"
+                  },
+                  "1": {
+                    "text": "Healthy"
+                  }
+                },
+                "type": "value"
+              }
+            ],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            },
+            "color": {
+              "mode": "thresholds"
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "HTTP Request Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{service=~\".*\"}[5m])) by (service)",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 3,
+        "title": "HTTP Error Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(http_errors_total{service=~\".*\"}[5m])) by (service)",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      },
+      {
+        "id": 4,
+        "title": "MCP Operations Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(mcp_operations_total{service=~\".*\"}[5m])) by (service, operation)",
+            "legendFormat": "{{service}} - {{operation}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops/s"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        }
+      },
+      {
+        "id": 5,
+        "title": "OpenProject Connection Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "openproject_connection_status{service=~\".*\"}",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "options": {
+                  "0": {
+                    "text": "Disconnected"
+                  },
+                  "1": {
+                    "text": "Connected"
+                  }
+                },
+                "type": "value"
+              }
+            ],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            },
+            "color": {
+              "mode": "thresholds"
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        }
+      },
+      {
+        "id": 6,
+        "title": "HTTP Request Duration (P95)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=~\".*\"}[5m])) by (le, service))",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        }
+      },
+      {
+        "id": 7,
+        "title": "Active Requests",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "active_requests{service=~\".*\"}",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        }
+      },
+      {
+        "id": 8,
+        "title": "System Resources",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) by (instance) * 100)",
+            "legendFormat": "CPU Usage - {{instance}}"
+          },
+          {
+            "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
+            "legendFormat": "Memory Usage - {{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 32
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}

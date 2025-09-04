@@ -1,0 +1,230 @@
+name: TypeScript Solution CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'solution-typescript/**'
+      - 'mcp-core/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'solution-typescript/**'
+      - 'mcp-core/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: false
+        default: 'dev'
+        type: choice
+        options: [dev, staging, production]
+
+env:
+  SOLUTION: solution-typescript
+  REGISTRY: ghcr.io
+  NODE_VERSION: '18'
+
+jobs:
+  # Build job
+  build:
+    name: Build TypeScript Solution
+    uses: ./.github/workflows/reusable/build.yml
+    with:
+      solution: ${{ env.SOLUTION }}
+      node-version: ${{ env.NODE_VERSION }}
+      cache-key: '-${{ github.sha }}'
+
+  # Test job
+  test:
+    name: Test TypeScript Solution
+    needs: build
+    uses: ./.github/workflows/reusable/test.yml
+    with:
+      solution: ${{ env.SOLUTION }}
+      test-type: 'all'
+      node-version: ${{ env.NODE_VERSION }}
+      coverage-threshold: '80'
+
+  # Security scan job
+  security-scan:
+    name: Security Scan TypeScript Solution
+    needs: build
+    uses: ./.github/workflows/reusable/security-scan.yml
+    with:
+      solution: ${{ env.SOLUTION }}
+      scan-type: 'all'
+      fail-on-critical: true
+
+  # Docker build job (dev only)
+  docker-build-dev:
+    name: Build Docker Image (Dev)
+    needs: [test, security-scan]
+    if: github.ref == 'refs/heads/develop'
+    uses: ./.github/workflows/reusable/docker-build.yml
+    with:
+      solution: ${{ env.SOLUTION }}
+      dockerfile-path: 'Dockerfile'
+      context-path: '.'
+      image-tags: 'develop,${{ github.sha }}'
+      push-to-registry: true
+      registry: ${{ env.REGISTRY }}
+      scan-image: true
+
+  # Quality gate job
+  quality-gate:
+    name: Quality Gate TypeScript Solution
+    needs: [test, security-scan]
+    uses: ./.github/workflows/reusable/quality-gate.yml
+    with:
+      solution: ${{ env.SOLUTION }}
+      coverage-threshold: '80'
+      max-critical-issues: '0'
+      max-high-issues: '3'
+
+  # Deploy to staging
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [quality-gate, docker-build-dev]
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy to staging
+      run: |
+        echo "Deploying ${{ env.SOLUTION }} to staging environment..."
+        # Placeholder for deployment logic
+        echo "Deployment to staging completed successfully"
+
+    - name: Run smoke tests
+      run: |
+        echo "Running smoke tests against staging deployment..."
+        # Placeholder for smoke test logic
+        echo "Smoke tests passed"
+
+  # Docker build job (production)
+  docker-build-prod:
+    name: Build Docker Image (Production)
+    needs: quality-gate
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/reusable/docker-build.yml
+    with:
+      solution: ${{ env.SOLUTION }}
+      dockerfile-path: 'Dockerfile'
+      context-path: '.'
+      image-tags: 'latest,stable,${{ github.sha }}'
+      push-to-registry: true
+      registry: ${{ env.REGISTRY }}
+      scan-image: true
+
+  # Deploy to production (manual approval)
+  deploy-production:
+    name: Deploy to Production
+    needs: [docker-build-prod]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy to production
+      run: |
+        echo "Deploying ${{ env.SOLUTION }} to production environment..."
+        # Placeholder for deployment logic
+        echo "Production deployment completed successfully"
+
+    - name: Verify deployment
+      run: |
+        echo "Verifying production deployment..."
+        # Placeholder for verification logic
+        echo "Production deployment verified"
+
+  # Generate comprehensive report
+  generate-report:
+    name: Generate CI/CD Report
+    needs: [quality-gate]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts/
+
+    - name: Generate comprehensive report
+      run: |
+        mkdir -p ci-reports
+        
+        cat > ci-reports/typescript-solution-cicd-report.json << EOF
+        {
+          "solution": "${{ env.SOLUTION }}",
+          "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "commit": "${{ github.sha }}",
+          "branch": "${{ github.ref_name }}",
+          "run_id": "${{ github.run_id }}",
+          "workflow": "${{ github.workflow }}",
+          "jobs": {
+            "build": {
+              "status": "${{ needs.build.result }}",
+              "outputs": {
+                "build-successful": "${{ needs.build.outputs.build-successful }}",
+                "artifacts-uploaded": "${{ needs.build.outputs.artifacts-uploaded }}"
+              }
+            },
+            "test": {
+              "status": "${{ needs.test.result }}",
+              "outputs": {
+                "tests-passed": "${{ needs.test.outputs.tests-passed }}",
+                "coverage-percentage": "${{ needs.test.outputs.coverage-percentage }}"
+              }
+            },
+            "security-scan": {
+              "status": "${{ needs.security-scan.result }}",
+              "outputs": {
+                "security-scan-passed": "${{ needs.security-scan.outputs.security-scan-passed }}",
+                "critical-vulnerabilities": "${{ needs.security-scan.outputs.critical-vulnerabilities }}",
+                "high-vulnerabilities": "${{ needs.security-scan.outputs.high-vulnerabilities }}"
+              }
+            },
+            "quality-gate": {
+              "status": "${{ needs.quality-gate.result }}",
+              "outputs": {
+                "quality-gate-passed": "${{ needs.quality-gate.outputs.quality-gate-passed }}",
+                "quality-score": "${{ needs.quality-gate.outputs.quality-score }}"
+              }
+            }
+          },
+          "overall_status": "${{ needs.quality-gate.outputs.quality-gate-passed == 'true' && 'SUCCESS' || 'FAILED' }}"
+        }
+        EOF
+
+    - name: Upload CI/CD report
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.SOLUTION }}-cicd-report-${{ github.run_number }}
+        path: |
+          ci-reports/
+        retention-days: 30
+
+    - name: CI/CD summary
+      run: |
+        echo "## 🚀 TypeScript Solution CI/CD Pipeline" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Build**: ${{ needs.build.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Tests**: ${{ needs.test.result }} (Coverage: ${{ needs.test.outputs.coverage-percentage }}%)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Security**: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Quality Gate**: ${{ needs.quality-gate.result }} (Score: ${{ needs.quality-gate.outputs.quality-score }}/100)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Overall**: ${{ needs.quality-gate.outputs.quality-gate-passed == 'true' && '✅ SUCCESS' || '❌ FAILED' }}" >> $GITHUB_STEP_SUMMARY

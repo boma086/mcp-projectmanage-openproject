@@ -9,6 +9,10 @@ PyYAML>=6.0.1
 Jinja2>=3.1.2
 aiohttp>=3.9.0
 
+# 监控和可观测性
+prometheus-client>=0.21.0  # Prometheus 指标收集
+structlog>=24.1.0        # 结构化日志
+
 # 测试依赖
 pytest>=7.4.3
 pytest-asyncio>=0.21.1

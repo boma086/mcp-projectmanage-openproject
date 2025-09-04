@@ -1,0 +1,162 @@
+groups:
+  - name: mcp-openproject-alerts
+    rules:
+      # Service Health Alerts
+      - alert: MCPServiceDown
+        expr: health_check_status{check_type="service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: "{{service}}"
+          check_type: "service_health"
+        annotations:
+          summary: "MCP service {{service}} is down"
+          description: "MCP service {{service}} has been unhealthy for more than 1 minute"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/MCP-Service-Down"
+
+      - alert: OpenProjectConnectionLost
+        expr: openproject_connection_status == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: "{{service}}"
+          check_type: "openproject_connection"
+        annotations:
+          summary: "OpenProject connection lost for {{service}}"
+          description: "OpenProject API connection has been lost for {{service}} for more than 2 minutes"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/OpenProject-Connection-Lost"
+
+      # Performance Alerts
+      - alert: HighHTTPErrorRate
+        expr: rate(http_errors_total{service=~".*"}[5m]) / rate(http_requests_total{service=~".*"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{service}}"
+          check_type: "http_error_rate"
+        annotations:
+          summary: "High HTTP error rate for {{service}}"
+          description: "HTTP error rate for {{service}} is {{ $value | humanizePercentage }} (threshold: 5%)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-HTTP-Error-Rate"
+
+      - alert: HighHTTPResponseTime
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=~".*"}[5m])) by (le, service)) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{service}}"
+          check_type: "http_response_time"
+        annotations:
+          summary: "High HTTP response time for {{service}}"
+          description: "95th percentile HTTP response time for {{service}} is {{ $value | humanizeDuration }} (threshold: 2s)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-HTTP-Response-Time"
+
+      - alert: HighMCPOperationErrorRate
+        expr: rate(mcp_errors_total{service=~".*"}[5m]) / rate(mcp_operations_total{service=~".*"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{service}}"
+          check_type: "mcp_error_rate"
+        annotations:
+          summary: "High MCP operation error rate for {{service}}"
+          description: "MCP operation error rate for {{service}} is {{ $value | humanizePercentage }} (threshold: 10%)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-MCP-Operation-Error-Rate"
+
+      # Resource Alerts
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          check_type: "memory_usage"
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanizePercentage }} (threshold: 85%)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-Memory-Usage"
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          check_type: "cpu_usage"
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanizePercentage }} (threshold: 80%)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-CPU-Usage"
+
+      - alert: HighDiskUsage
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          check_type: "disk_usage"
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value | humanizePercentage }} (threshold: 90%)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-Disk-Usage"
+
+      # FastAPI Specific Alerts
+      - alert: HighWebSocketConnectionCount
+        expr: websocket_connections_total{service="fastapi-solution"} > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: "fastapi-solution"
+          check_type: "websocket_connections"
+        annotations:
+          summary: "High WebSocket connection count"
+          description: "WebSocket connection count is {{ $value }} (threshold: 100)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-WebSocket-Connection-Count"
+
+      # FastMCP Specific Alerts
+      - alert: HighSSEConnectionCount
+        expr: sse_connections_total{service="fastmcp-solution"} > 50
+        for: 5m
+        labels:
+          severity: warning
+          service: "fastmcp-solution"
+          check_type: "sse_connections"
+        annotations:
+          summary: "High SSE connection count"
+          description: "SSE connection count is {{ $value }} (threshold: 50)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-SSE-Connection-Count"
+
+      # TypeScript Specific Alerts
+      - alert: HighEventLoopLag
+        expr: nodejs_eventloop_lag_seconds{service="typescript-solution"} > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          service: "typescript-solution"
+          check_type: "event_loop_lag"
+        annotations:
+          summary: "High event loop lag for TypeScript solution"
+          description: "Event loop lag is {{ $value | humanizeDuration }} (threshold: 500ms)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-Event-Loop-Lag"
+
+      - alert: HighHeapMemoryUsage
+        expr: nodejs_heap_used_bytes{service="typescript-solution"} / nodejs_heap_size_bytes{service="typescript-solution"} > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: "typescript-solution"
+          check_type: "heap_memory_usage"
+        annotations:
+          summary: "High heap memory usage for TypeScript solution"
+          description: "Heap memory usage is {{ $value | humanizePercentage }} (threshold: 90%)"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/High-Heap-Memory-Usage"
+
+      # Availability Alerts
+      - alert: ServiceUnreachable
+        expr: up{job=~"mcp-.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: "{{service}}"
+          check_type: "service_availability"
+        annotations:
+          summary: "Service {{service}} is unreachable"
+          description: "Service {{service}} has been unreachable for more than 1 minute"
+          runbook_url: "https://github.com/your-org/mcp-openproject/wiki/Service-Unreachable"

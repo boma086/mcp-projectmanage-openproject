@@ -1,0 +1,260 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "MCP OpenProject - FastAPI Solution",
+    "tags": ["mcp", "openproject", "fastapi"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "FastAPI Service Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "health_check_status{check_type=\"service\", service=\"fastapi-solution\"}",
+            "legendFormat": "Service Health"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "options": {
+                  "0": {
+                    "text": "Unhealthy"
+                  },
+                  "1": {
+                    "text": "Healthy"
+                  }
+                },
+                "type": "value"
+              }
+            ],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            },
+            "color": {
+              "mode": "thresholds"
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "WebSocket Connections",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "websocket_connections_total{service=\"fastapi-solution\"}",
+            "legendFormat": "WebSocket"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Connection Pool Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "connection_pool_size{service=\"fastapi-solution\"}",
+            "legendFormat": "Pool Size"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 0
+        }
+      },
+      {
+        "id": 4,
+        "title": "HTTP Request Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{service=\"fastapi-solution\"}[5m])",
+            "legendFormat": "Requests"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 5,
+        "title": "WebSocket Message Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(websocket_messages_total{service=\"fastapi-solution\"}[5m])",
+            "legendFormat": "{{message_type}} {{direction}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "msg/s"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      },
+      {
+        "id": 6,
+        "title": "Async Request Duration",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{service=\"fastapi-solution\"}[5m])) by (le))",
+            "legendFormat": "P50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=\"fastapi-solution\"}[5m])) by (le))",
+            "legendFormat": "P95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{service=\"fastapi-solution\"}[5m])) by (le))",
+            "legendFormat": "P99"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        }
+      },
+      {
+        "id": 7,
+        "title": "Connection Pool Metrics",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "connection_pool_active_connections{service=\"fastapi-solution\"}",
+            "legendFormat": "Active - {{pool_type}}"
+          },
+          {
+            "expr": "connection_pool_idle_connections{service=\"fastapi-solution\"}",
+            "legendFormat": "Idle - {{pool_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        }
+      },
+      {
+        "id": 8,
+        "title": "MCP Operations by Tool",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(mcp_operations_total{service=\"fastapi-solution\"}[5m])",
+            "legendFormat": "{{tool}} - {{operation}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops/s"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        }
+      },
+      {
+        "id": 9,
+        "title": "Performance Metrics",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{service=\"fastapi-solution\"}[5m])",
+            "legendFormat": "Request Rate"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=\"fastapi-solution\"}[5m])) by (le))",
+            "legendFormat": "P95 Latency"
+          },
+          {
+            "expr": "rate(http_errors_total{service=\"fastapi-solution\"}[5m]) / rate(http_requests_total{service=\"fastapi-solution\"}[5m])",
+            "legendFormat": "Error Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 32
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}

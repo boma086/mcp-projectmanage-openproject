@@ -1,0 +1,602 @@
+name: CI/CD Pipeline Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      validation-type:
+        description: 'Type of validation to run'
+        required: true
+        type: choice
+        options: [full, quick, security, performance]
+        default: full
+      solutions:
+        description: 'Solutions to validate (comma-separated)'
+        required: false
+        type: string
+        default: 'all'
+  schedule:
+    # Run validation daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/**'
+      - 'test-*/**'
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  setup:
+    name: Setup Validation
+    runs-on: ubuntu-latest
+    outputs:
+      solutions: ${{ steps.setup.outputs.solutions }}
+      validation-type: ${{ steps.setup.outputs.validation-type }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup validation configuration
+      id: setup
+      run: |
+        VALIDATION_TYPE="${{ github.event.inputs.validation-type || 'full' }}"
+        SOLUTIONS_INPUT="${{ github.event.inputs.solutions || 'all' }}"
+        
+        # Determine solutions to validate
+        if [ "$SOLUTIONS_INPUT" = "all" ]; then
+          SOLUTIONS='["solution-http", "solution-fastapi", "solution-fastmcp", "solution-typescript"]'
+        else
+          # Convert comma-separated to JSON array
+          SOLUTIONS_JSON=$(echo "$SOLUTIONS_INPUT" | tr ',' '\n' | sed 's/^/"/' | sed 's/$/"/' | tr '\n' ',' | sed 's/,$//' | sed 's/^/[/; s/$/]/')
+          SOLUTIONS="$SOLUTIONS_JSON"
+        fi
+        
+        echo "solutions=$SOLUTIONS" >> $GITHUB_OUTPUT
+        echo "validation-type=$VALIDATION_TYPE" >> $GITHUB_OUTPUT
+        
+        echo "Validation configuration:"
+        echo "  Type: $VALIDATION_TYPE"
+        echo "  Solutions: $SOLUTIONS"
+
+  validate-solutions:
+    name: Validate Solutions
+    runs-on: ubuntu-latest
+    needs: setup
+    
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.setup.outputs.solutions) }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyyaml safety
+
+    - name: Validate solution structure
+      run: |
+        echo "Validating ${{ matrix.solution }} structure..."
+        
+        python3 << 'EOF'
+        import os
+        import json
+        from pathlib import Path
+        
+        solution = "${{ matrix.solution }}"
+        validation_results = {
+            "solution": solution,
+            "timestamp": os.environ.get('GITHUB_TIMESTAMP', ''),
+            "structure_valid": True,
+            "files_checked": [],
+            "issues_found": []
+        }
+        
+        solution_path = Path(solution)
+        
+        # Check solution directory
+        if not solution_path.exists():
+            validation_results["structure_valid"] = False
+            validation_results["issues_found"].append(f"Solution directory {solution} does not exist")
+        else:
+            validation_results["files_checked"].append("solution_directory")
+        
+        # Check required files
+        required_files = {
+            "solution-http": ["src/main.py", "requirements.txt"],
+            "solution-fastapi": ["app/main.py", "requirements.txt"],
+            "solution-fastmcp": ["src/main.py", "requirements.txt"],
+            "solution-typescript": ["package.json", "tsconfig.json"]
+        }
+        
+        if solution in required_files:
+            for file_path in required_files[solution]:
+                full_path = solution_path / file_path
+                if full_path.exists():
+                    validation_results["files_checked"].append(file_path)
+                else:
+                    validation_results["structure_valid"] = False
+                    validation_results["issues_found"].append(f"Required file {file_path} missing")
+        
+        # Check Dockerfile
+        dockerfile_path = solution_path / "Dockerfile"
+        if dockerfile_path.exists():
+            validation_results["files_checked"].append("Dockerfile")
+        else:
+            validation_results["structure_valid"] = False
+            validation_results["issues_found"].append("Dockerfile missing")
+        
+        # Save results
+        with open(f"validation-results/{solution}-structure.json", 'w') as f:
+            json.dump(validation_results, f, indent=2)
+        
+        print(f"Structure validation completed for {solution}")
+        if validation_results["structure_valid"]:
+            print("✅ Structure validation passed")
+        else:
+            print("❌ Structure validation failed")
+            print("Issues:")
+            for issue in validation_results["issues_found"]:
+                print(f"  - {issue}")
+        EOF
+
+    - name: Validate dependencies
+      if: matrix.solution != 'solution-typescript'
+      run: |
+        echo "Validating ${{ matrix.solution }} dependencies..."
+        
+        cd "${{ matrix.solution }}"
+        
+        # Run safety check
+        if [ -f "requirements.txt" ]; then
+          safety check --json --output ../validation-results/${{ matrix.solution }}-safety.json || true
+        fi
+        
+        cd ..
+
+    - name: Validate Node.js dependencies
+      if: matrix.solution == 'solution-typescript'
+      run: |
+        echo "Validating ${{ matrix.solution }} Node.js dependencies..."
+        
+        cd "${{ matrix.solution }}"
+        
+        # Run npm audit
+        if [ -f "package.json" ]; then
+          npm audit --json > ../validation-results/${{ matrix.solution }}-npm-audit.json 2>&1 || true
+        fi
+        
+        cd ..
+
+    - name: Upload validation results
+      uses: actions/upload-artifact@v3
+      with:
+        name: validation-results-${{ matrix.solution }}
+        path: validation-results/
+        retention-days: 7
+
+  validate-workflows:
+    name: Validate Workflows
+    runs-on: ubuntu-latest
+    needs: setup
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyyaml
+
+    - name: Validate workflow syntax
+      run: |
+        echo "Validating GitHub Actions workflows..."
+        
+        python3 << 'EOF'
+        import os
+        import json
+        import yaml
+        from pathlib import Path
+        
+        workflow_dir = Path('.github/workflows')
+        validation_results = {
+            "timestamp": os.environ.get('GITHUB_TIMESTAMP', ''),
+            "workflows_validated": [],
+            "syntax_errors": [],
+            "security_issues": [],
+            "best_practices": []
+        }
+        
+        workflows_to_validate = [
+            'ci-http.yml',
+            'ci-fastapi.yml', 
+            'ci-typescript.yml',
+            'ci-fastmcp.yml',
+            'ci-unified.yml',
+            'deploy-environment.yml',
+            'quality-gate.yml',
+            'deployment-approval.yml',
+            'security-performance.yml',
+            'container-registry.yml'
+        ]
+        
+        for workflow_file in workflows_to_validate:
+            workflow_path = workflow_dir / workflow_file
+            
+            if workflow_path.exists():
+                try:
+                    with open(workflow_path, 'r') as f:
+                        workflow_data = yaml.safe_load(f)
+                    
+                    validation_results["workflows_validated"].append(workflow_file)
+                    
+                    # Check required fields
+                    required_fields = ['name', 'on', 'jobs']
+                    for field in required_fields:
+                        if field not in workflow_data:
+                            validation_results["syntax_errors"].append(f"{workflow_file}: Missing {field} field")
+                    
+                    # Check for hardcoded secrets
+                    if 'jobs' in workflow_data:
+                        for job_name, job_config in workflow_data['jobs'].items():
+                            if 'env' in job_config:
+                                for key, value in job_config['env'].items():
+                                    if any(secret_word in key.lower() for secret_word in ['secret', 'key', 'password', 'token']):
+                                        validation_results["security_issues"].append(f"{workflow_file}: Potential hardcoded secret '{key}' in job '{job_name}'")
+                    
+                    # Check for best practices
+                    if 'jobs' in workflow_data:
+                        for job_name, job_config in workflow_data['jobs'].items():
+                            # Check if job has timeout
+                            if 'timeout-minutes' not in job_config:
+                                validation_results["best_practices"].append(f"{workflow_file}: Job '{job_name}' missing timeout-minutes")
+                            
+                            # Check if job has proper permissions
+                            if 'permissions' not in job_config:
+                                validation_results["best_practices"].append(f"{workflow_file}: Job '{job_name}' missing permissions")
+                
+                except yaml.YAMLError as e:
+                    validation_results["syntax_errors"].append(f"{workflow_file}: YAML syntax error - {str(e)}")
+                except Exception as e:
+                    validation_results["syntax_errors"].append(f"{workflow_file}: Error parsing workflow - {str(e)}")
+            else:
+                validation_results["syntax_errors"].append(f"{workflow_file}: Workflow file not found")
+        
+        # Save results
+        with open("validation-results/workflows-validation.json", 'w') as f:
+            json.dump(validation_results, f, indent=2)
+        
+        print("Workflow validation completed")
+        print(f"Validated {len(validation_results['workflows_validated'])} workflows")
+        print(f"Found {len(validation_results['syntax_errors'])} syntax errors")
+        print(f"Found {len(validation_results['security_issues'])} security issues")
+        print(f"Found {len(validation_results['best_practices'])} best practice recommendations")
+        EOF
+
+    - name: Upload workflow validation results
+      uses: actions/upload-artifact@v3
+      with:
+        name: workflow-validation-results
+        path: validation-results/
+        retention-days: 7
+
+  validate-deployment:
+    name: Validate Deployment Configuration
+    runs-on: ubuntu-latest
+    needs: setup
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Validate deployment scripts
+      run: |
+        echo "Validating deployment configuration..."
+        
+        python3 << 'EOF'
+        import os
+        import json
+        from pathlib import Path
+        
+        validation_results = {
+            "timestamp": os.environ.get('GITHUB_TIMESTAMP', ''),
+            "deployment_scripts": [],
+            "kubernetes_manifests": [],
+            "issues_found": []
+        }
+        
+        # Check deployment scripts
+        scripts_to_check = [
+            'scripts/deploy.sh',
+            'scripts/deploy-env.sh',
+            'scripts/build-containers.sh'
+        ]
+        
+        for script in scripts_to_check:
+            script_path = Path(script)
+            if script_path.exists():
+                validation_results["deployment_scripts"].append(script)
+                
+                # Check if executable
+                if os.access(script_path, os.X_OK):
+                    print(f"✅ {script} is executable")
+                else:
+                    validation_results["issues_found"].append(f"{script} is not executable")
+            else:
+                validation_results["issues_found"].append(f"{script} not found")
+        
+        # Check Kubernetes manifests
+        deployment_dir = Path('deployment')
+        if deployment_dir.exists():
+            k8s_files = list(deployment_dir.rglob('*.yaml')) + list(deployment_dir.rglob('*.yml'))
+            validation_results["kubernetes_manifests"] = [str(f) for f in k8s_files]
+        
+        # Save results
+        with open("validation-results/deployment-validation.json", 'w') as f:
+            json.dump(validation_results, f, indent=2)
+        
+        print("Deployment validation completed")
+        print(f"Found {len(validation_results['deployment_scripts'])} deployment scripts")
+        print(f"Found {len(validation_results['kubernetes_manifests'])} Kubernetes manifests")
+        print(f"Found {len(validation_results['issues_found'])} issues")
+        EOF
+
+    - name: Upload deployment validation results
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-validation-results
+        path: validation-results/
+        retention-days: 7
+
+  run-tests:
+    name: Run Integration Tests
+    runs-on: ubuntu-latest
+    needs: [setup, validate-solutions, validate-workflows, validate-deployment]
+    if: needs.setup.outputs.validation-type == 'full'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest asyncio aiohttp
+
+    - name: Run cross-solution validation tests
+      run: |
+        echo "Running cross-solution validation tests..."
+        
+        python scripts/validate-cicd.py --output validation-results/cicd-validation.json
+        
+        # Run test utilities validation
+        python test-utils/python/cross_solution_tester.py \
+          --environment development \
+          --test-type validation \
+          --report-file validation-results/cross-solution-validation.json
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-validation-results
+        path: validation-results/
+        retention-days: 7
+
+  generate-report:
+    name: Generate Validation Report
+    runs-on: ubuntu-latest
+    needs: [setup, validate-solutions, validate-workflows, validate-deployment, run-tests]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Download all validation results
+      run: |
+        mkdir -p validation-results
+        
+        # Create comprehensive validation report
+        python3 << 'EOF'
+        import json
+        import os
+        from datetime import datetime
+        from pathlib import Path
+        
+        comprehensive_report = {
+            "timestamp": datetime.now().isoformat(),
+            "validation_type": "${{ needs.setup.outputs.validation-type }}",
+            "solutions_validated": ${{ needs.setup.outputs.solutions }},
+            "overall_status": "PASSED",
+            "summary": {
+                "total_checks": 0,
+                "passed_checks": 0,
+                "failed_checks": 0,
+                "warning_checks": 0
+            },
+            "sections": {
+                "solution_validation": {},
+                "workflow_validation": {},
+                "deployment_validation": {},
+                "test_validation": {}
+            },
+            "critical_issues": [],
+            "recommendations": [],
+            "next_steps": []
+        }
+        
+        # Aggregate solution validation results
+        solution_results = {}
+        total_solutions = 0
+        valid_solutions = 0
+        
+        for solution in ${{ fromJson(needs.setup.outputs.solutions) }}:
+            structure_file = Path(f"validation-results/{solution}-structure.json")
+            if structure_file.exists():
+                with open(structure_file, 'r') as f:
+                    data = json.load(f)
+                solution_results[solution] = data
+                total_solutions += 1
+                if data.get("structure_valid", False):
+                    valid_solutions += 1
+                else:
+                    comprehensive_report["critical_issues"].extend(data.get("issues_found", []))
+        
+        comprehensive_report["sections"]["solution_validation"] = solution_results
+        
+        # Aggregate workflow validation results
+        workflow_file = Path("validation-results/workflows-validation.json")
+        if workflow_file.exists():
+            with open(workflow_file, 'r') as f:
+                workflow_data = json.load(f)
+            comprehensive_report["sections"]["workflow_validation"] = workflow_data
+            comprehensive_report["critical_issues"].extend(workflow_data.get("syntax_errors", []))
+        
+        # Aggregate deployment validation results
+        deployment_file = Path("validation-results/deployment-validation.json")
+        if deployment_file.exists():
+            with open(deployment_file, 'r') as f:
+                deployment_data = json.load(f)
+            comprehensive_report["sections"]["deployment_validation"] = deployment_data
+            comprehensive_report["critical_issues"].extend(deployment_data.get("issues_found", []))
+        
+        # Calculate summary statistics
+        comprehensive_report["summary"]["total_checks"] = (
+            len(solution_results) + 
+            len(comprehensive_report["sections"]["workflow_validation"].get("syntax_errors", [])) +
+            len(comprehensive_report["sections"]["workflow_validation"].get("security_issues", [])) +
+            len(comprehensive_report["sections"]["deployment_validation"].get("issues_found", []))
+        )
+        
+        comprehensive_report["summary"]["failed_checks"] = len(comprehensive_report["critical_issues"])
+        comprehensive_report["summary"]["passed_checks"] = comprehensive_report["summary"]["total_checks"] - comprehensive_report["summary"]["failed_checks"]
+        
+        # Determine overall status
+        if comprehensive_report["summary"]["failed_checks"] == 0:
+            comprehensive_report["overall_status"] = "PASSED"
+        elif len(comprehensive_report["critical_issues"]) > 0:
+            comprehensive_report["overall_status"] = "FAILED"
+        else:
+            comprehensive_report["overall_status"] = "WARNING"
+        
+        # Generate recommendations
+        if comprehensive_report["summary"]["failed_checks"] > 0:
+            comprehensive_report["recommendations"].append("Address critical validation failures")
+        
+        if valid_solutions < total_solutions:
+            comprehensive_report["recommendations"].append(f"Fix {total_solutions - valid_solutions} solution validation issues")
+        
+        if comprehensive_report["sections"]["workflow_validation"].get("security_issues"):
+            comprehensive_report["recommendations"].append("Address workflow security issues")
+        
+        # Generate next steps
+        if comprehensive_report["overall_status"] == "PASSED":
+            comprehensive_report["next_steps"].append("✅ CI/CD pipeline is ready for production use")
+            comprehensive_report["next_steps"].append("🚀 Proceed with deployment activities")
+        elif comprehensive_report["overall_status"] == "FAILED":
+            comprehensive_report["next_steps"].append("🛑 Block deployment until critical issues are resolved")
+            comprehensive_report["next_steps"].append("🔧 Fix validation failures and re-run validation")
+        else:
+            comprehensive_report["next_steps"].append("⚠️ Review warnings before proceeding with deployment")
+        
+        # Save comprehensive report
+        with open("validation-results/comprehensive-validation-report.json", 'w') as f:
+            json.dump(comprehensive_report, f, indent=2)
+        
+        print("Comprehensive validation report generated")
+        print(f"Overall Status: {comprehensive_report['overall_status']}")
+        print(f"Total Checks: {comprehensive_report['summary']['total_checks']}")
+        print(f"Failed Checks: {comprehensive_report['summary']['failed_checks']}")
+        print(f"Critical Issues: {len(comprehensive_report['critical_issues'])}")
+        EOF
+
+    - name: Upload comprehensive report
+      uses: actions/upload-artifact@v3
+      with:
+        name: comprehensive-validation-report
+        path: validation-results/
+        retention-days: 30
+
+    - name: Display validation summary
+      run: |
+        echo "=== CI/CD Pipeline Validation Summary ==="
+        
+        if [ -f "validation-results/comprehensive-validation-report.json" ]; then
+          python3 -c "
+          import json
+          with open('validation-results/comprehensive-validation-report.json', 'r') as f:
+              report = json.load(f)
+          
+          print(f'Overall Status: {report[\"overall_status\"]}')
+          print(f'Total Checks: {report[\"summary\"][\"total_checks\"]}')
+          print(f'Failed Checks: {report[\"summary\"][\"failed_checks\"]}')
+          print(f'Critical Issues: {len(report[\"critical_issues\"])}')
+          
+          if report['recommendations']:
+              print('\\nRecommendations:')
+              for rec in report['recommendations']:
+                  print(f'  - {rec}')
+          
+          if report['next_steps']:
+              print('\\nNext Steps:')
+              for step in report['next_steps']:
+                  print(f'  {step}')
+          "
+        fi
+
+    - name: Set validation status
+      run: |
+        if [ -f "validation-results/comprehensive-validation-report.json" ]; then
+          STATUS=$(python3 -c "
+          import json
+          with open('validation-results/comprehensive-validation-report.json', 'r') as f:
+              report = json.load(f)
+          print(report['overall_status'])
+          ")
+          
+          echo "Validation Status: $STATUS"
+          
+          if [ "$STATUS" = "FAILED" ]; then
+            echo "❌ CI/CD validation failed - blocking deployment"
+            exit 1
+          elif [ "$STATUS" = "WARNING" ]; then
+            echo "⚠️ CI/CD validation passed with warnings"
+          else
+            echo "✅ CI/CD validation passed successfully"
+          fi
+        else
+          echo "❌ Validation report not found"
+          exit 1
+        fi

@@ -1,0 +1,313 @@
+services:
+  # HTTP Solution (Production)
+  http-solution:
+    build:
+      context: ./solution-http
+      dockerfile: Dockerfile
+      target: production
+    image: mcp-http:${VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "8010:8010"
+    environment:
+      - OPENPROJECT_URL=${OPENPROJECT_URL}
+      - OPENPROJECT_API_KEY=${OPENPROJECT_API_KEY}
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://mcpuser:${POSTGRES_PASSWORD}@postgres:5432/mcpdb
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    volumes:
+      - http_logs:/app/logs
+      - shared_web:/app/shared-web:ro
+    secrets:
+      - openproject_api_key
+      - postgres_password
+    deploy:
+      replicas: ${HTTP_REPLICAS:-2}
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  # FastAPI Solution (Production)
+  fastapi-solution:
+    build:
+      context: ./solution-fastapi
+      dockerfile: Dockerfile
+      target: runtime
+    image: mcp-fastapi:${VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "8020:8020"
+    environment:
+      - OPENPROJECT_URL=${OPENPROJECT_URL}
+      - OPENPROJECT_API_KEY=${OPENPROJECT_API_KEY}
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://mcpuser:${POSTGRES_PASSWORD}@postgres:5432/mcpdb
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=production
+      - WORKERS=4
+      - MAX_CONCURRENT_REQUESTS=1000
+      - ENABLE_METRICS=true
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    volumes:
+      - fastapi_logs:/app/logs
+      - shared_web:/app/shared-web:ro
+    secrets:
+      - openproject_api_key
+      - postgres_password
+    deploy:
+      replicas: ${FASTAPI_REPLICAS:-3}
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  # Redis Cluster (Production)
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+      - ./solution-fastapi/redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # PostgreSQL Cluster (Production)
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=mcpdb
+      - POSTGRES_USER=mcpuser
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data/pgdata:/var/lib/postgresql/data
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcpuser -d mcpdb"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    secrets:
+      - postgres_password
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./solution-fastapi/nginx/conf.d:/etc/nginx/conf.d/fastapi:ro
+      - ssl_certs:/etc/nginx/ssl:ro
+      - shared_web:/usr/share/nginx/html:ro
+    depends_on:
+      - http-solution
+      - fastapi-solution
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=720h'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./solution-fastapi/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/grafana_admin_password
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./solution-fastapi/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./solution-fastapi/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    secrets:
+      - grafana_admin_password
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Log Aggregation (Optional)
+  fluentd:
+    image: fluent/fluentd:v1.16-1
+    restart: unless-stopped
+    volumes:
+      - ./fluentd/conf:/fluentd/etc
+      - http_logs:/var/log/http
+      - fastapi_logs:/var/log/fastapi
+    networks:
+      - mcp-network
+    profiles:
+      - logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  http_logs:
+    driver: local
+  fastapi_logs:
+    driver: local
+  shared_web:
+    driver: local
+  ssl_certs:
+    driver: local
+
+networks:
+  mcp-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+secrets:
+  openproject_api_key:
+    file: ./.secrets/openproject_api_key.txt
+  postgres_password:
+    file: ./.secrets/postgres_password.txt
+  grafana_admin_password:
+    file: ./.secrets/grafana_admin_password.txt

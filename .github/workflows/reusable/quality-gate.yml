@@ -1,0 +1,248 @@
+name: Reusable Quality Gate Workflow
+
+on:
+  workflow_call:
+    inputs:
+      solution:
+        required: true
+        type: string
+        description: 'Solution name for quality gate'
+      coverage-threshold:
+        required: false
+        type: string
+        default: '80'
+        description: 'Minimum coverage threshold percentage'
+      max-critical-issues:
+        required: false
+        type: string
+        default: '0'
+        description: 'Maximum allowed critical security issues'
+      max-high-issues:
+        required: false
+        type: string
+        default: '3'
+        description: 'Maximum allowed high security issues'
+      max-performance-regression:
+        required: false
+        type: string
+        default: '5'
+        description: 'Maximum allowed performance regression percentage'
+
+    outputs:
+      quality-gate-passed:
+        description: 'Quality gate passed status'
+        value: ${{ jobs.quality-gate.outputs.quality-passed }}
+      quality-score:
+        description: 'Overall quality score'
+        value: ${{ jobs.quality-gate.outputs.quality-score }}
+      gate-results:
+        description: 'Quality gate results'
+        value: ${{ jobs.quality-gate.outputs.gate-results }}
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      quality-passed: ${{ steps.evaluate.outputs.quality-passed }}
+      quality-score: ${{ steps.evaluate.outputs.quality-score }}
+      gate-results: ${{ steps.evaluate.outputs.gate-results }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download test results
+      uses: actions/download-artifact@v3
+      with:
+        name: ${{ inputs.solution }}-test-results-${{ github.run_number }}
+        path: test-results/
+
+    - name: Download security results
+      uses: actions/download-artifact@v3
+      with:
+        name: ${{ inputs.solution }}-security-scan-${{ github.run_number }}
+        path: security-results/
+
+    - name: Download build results
+      uses: actions/download-artifact@v3
+      with:
+        name: ${{ inputs.solution }}-build-${{ github.run_number }}
+        path: build-results/
+
+    - name: Evaluate quality gates
+      id: evaluate
+      run: |
+        mkdir -p quality-reports
+        
+        # Initialize quality metrics
+        COVERAGE_PASSED=false
+        SECURITY_PASSED=false
+        PERFORMANCE_PASSED=false
+        BUILD_PASSED=false
+        
+        COVERAGE_PERCENTAGE=0
+        CRITICAL_ISSUES=0
+        HIGH_ISSUES=0
+        PERFORMANCE_REGRESSION=0
+        BUILD_SUCCESS=false
+        
+        # Check test coverage
+        if [ -f "test-results/coverage.xml" ]; then
+          python3 << 'EOF'
+          import xml.etree.ElementTree as ET
+          try:
+              tree = ET.parse('test-results/coverage.xml')
+              root = tree.getroot()
+              coverage = float(root.get('line-rate', '0')) * 100
+              print(f"COVERAGE_PERCENTAGE={coverage:.1f}")
+              
+              threshold = float("${{ inputs.coverage-threshold }}")
+              COVERAGE_PASSED = coverage >= threshold
+              print(f"COVERAGE_PASSED={COVERAGE_PASSED}")
+          except:
+              print("COVERAGE_PERCENTAGE=0.0")
+              print("COVERAGE_PASSED=false")
+          EOF
+        fi
+        
+        # Check security results
+        if [ -f "security-reports/security-summary.json" ]; then
+          python3 << 'EOF'
+          import json
+          try:
+              with open('security-reports/security-summary.json', 'r') as f:
+                  data = json.load(f)
+              
+              critical = int(data.get('critical_vulnerabilities', 0))
+              high = int(data.get('high_vulnerabilities', 0))
+              
+              print(f"CRITICAL_ISSUES={critical}")
+              print(f"HIGH_ISSUES={high}")
+              
+              max_critical = int("${{ inputs.max-critical-issues }}")
+              max_high = int("${{ inputs.max-high-issues }}")
+              
+              SECURITY_PASSED = critical <= max_critical and high <= max_high
+              print(f"SECURITY_PASSED={SECURITY_PASSED}")
+          except:
+              print("CRITICAL_ISSUES=0")
+              print("HIGH_ISSUES=0")
+              print("SECURITY_PASSED=false")
+          EOF
+        fi
+        
+        # Check build results
+        if [ -f "build-results/build-info.json" ]; then
+          python3 << 'EOF'
+          import json
+          try:
+              with open('build-results/build-info.json', 'r') as f:
+                  data = json.load(f)
+              
+              BUILD_SUCCESS = data.get('build_time') is not None
+              print(f"BUILD_PASSED={BUILD_SUCCESS}")
+          except:
+              print("BUILD_PASSED=false")
+          EOF
+        fi
+        
+        # Calculate quality score (0-100)
+        python3 << 'EOF'
+        import os
+        
+        # Read environment variables
+        coverage = float(os.getenv('COVERAGE_PERCENTAGE', '0'))
+        coverage_passed = os.getenv('COVERAGE_PASSED', 'false').lower() == 'true'
+        security_passed = os.getenv('SECURITY_PASSED', 'false').lower() == 'true'
+        build_passed = os.getenv('BUILD_PASSED', 'false').lower() == 'true'
+        
+        # Calculate weighted score
+        score = 0
+        
+        # Coverage weight: 40%
+        coverage_score = min(coverage, 100) * 0.4
+        score += coverage_score
+        
+        # Security weight: 40%
+        if security_passed:
+            score += 40
+        
+        # Build weight: 20%
+        if build_passed:
+            score += 20
+        
+        print(f"QUALITY_SCORE={int(score)}")
+        EOF
+        
+        # Determine overall quality gate status
+        python3 << 'EOF'
+        import os
+        
+        coverage_passed = os.getenv('COVERAGE_PASSED', 'false').lower() == 'true'
+        security_passed = os.getenv('SECURITY_PASSED', 'false').lower() == 'true'
+        build_passed = os.getenv('BUILD_PASSED', 'false').lower() == 'true'
+        
+        QUALITY_PASSED = coverage_passed and security_passed and build_passed
+        print(f"QUALITY_PASSED={QUALITY_PASSED}")
+        EOF
+        
+        # Create quality gate report
+        cat > quality-reports/quality-gate-report.json << EOF
+        {
+          "solution": "${{ inputs.solution }}",
+          "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "commit": "${{ github.sha }}",
+          "run_id": "${{ github.run_id }}",
+          "gates": {
+            "coverage": {
+              "threshold": "${{ inputs.coverage-threshold }}%",
+              "actual": "${COVERAGE_PERCENTAGE}%",
+              "passed": $COVERAGE_PASSED
+            },
+            "security": {
+              "max_critical": "${{ inputs.max-critical-issues }}",
+              "max_high": "${{ inputs.max-high-issues }}",
+              "critical_found": "${CRITICAL_ISSUES}",
+              "high_found": "${HIGH_ISSUES}",
+              "passed": $SECURITY_PASSED
+            },
+            "build": {
+              "passed": $BUILD_PASSED
+            }
+          },
+          "overall": {
+            "quality_score": "${QUALITY_SCORE}",
+            "quality_gate_passed": $QUALITY_PASSED
+          }
+        }
+        EOF
+        
+        echo "quality-passed=${QUALITY_PASSED}" >> $GITHUB_OUTPUT
+        echo "quality-score=${QUALITY_SCORE}" >> $GITHUB_OUTPUT
+        echo "gate-results=quality-reports/quality-gate-report.json" >> $GITHUB_OUTPUT
+
+    - name: Upload quality report
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: ${{ inputs.solution }}-quality-gate-${{ github.run_number }}
+        path: |
+          quality-reports/
+        retention-days: 30
+
+    - name: Quality gate summary
+      run: |
+        echo "## 🎯 Quality Gate Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Solution**: ${{ inputs.solution }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Quality Score**: ${{ steps.evaluate.outputs.quality-score }}/100" >> $GITHUB_STEP_SUMMARY
+        echo "- **Quality Gate**: ${{ steps.evaluate.outputs.quality-passed == 'true' && '✅ PASSED' || '❌ FAILED' }}" >> $GITHUB_STEP_SUMMARY
+        
+        echo "### Gate Details" >> $GITHUB_STEP_SUMMARY
+        echo "- **Coverage**: ≥${{ inputs.coverage-threshold }}%" >> $GITHUB_STEP_SUMMARY
+        echo "- **Security**: ≤${{ inputs.max-critical-issues }} critical, ≤${{ inputs.max-high-issues }} high" >> $GITHUB_STEP_SUMMARY
+        echo "- **Build**: Successful build required" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ steps.evaluate.outputs.quality-passed }}" == "false" ]]; then
+          echo "### 🚨 Quality Gates Failed" >> $GITHUB_STEP_SUMMARY
+          echo "One or more quality gates did not pass. Please review the detailed results." >> $GITHUB_STEP_SUMMARY
+        fi

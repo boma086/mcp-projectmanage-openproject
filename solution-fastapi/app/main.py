@@ -37,6 +37,16 @@ from mcp_core import (
     MCPError
 )
 
+# 导入监控模块
+from app.monitoring import (
+    get_monitoring, get_health_checker, update_health_checker_config,
+    monitor_http_request, monitor_mcp_operation, monitor_openproject_request
+)
+from app.monitoring.error_tracking import (
+    get_errors, get_error_stats, get_error_trends, 
+    resolve_error, export_errors
+)
+
 # Load environment variables first
 load_dotenv()
 
@@ -52,6 +62,14 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize core library configuration: {e}")
     raise MCPError(f"Failed to initialize core config: {e}")
+
+# Initialize monitoring system
+try:
+    monitoring = get_monitoring()
+    logger.info("Monitoring system initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize monitoring system: {e}")
+    # Don't raise here - monitoring failure shouldn't stop the application
 
 # Global service instances with proper typing
 mcp_handler: Optional[MCPHandler] = None
@@ -102,6 +120,10 @@ async def lifespan(app: FastAPI):
         for pool_type, is_healthy in pool_health.items():
             status = "healthy" if is_healthy else "unhealthy"
             logger.info(f"Connection pool {pool_type.value}: {status}")
+        
+        # Initialize health checker
+        health_checker = get_health_checker(settings.openproject_url, settings.openproject_api_key)
+        logger.info("Health checker initialized successfully")
         
         logger.info("FastAPI MCP Server initialized successfully")
         logger.info(f"Server running with {settings.app_name} v{settings.app_version}")
@@ -190,6 +212,15 @@ if not settings.debug:
 # Add timing middleware
 app.add_middleware(AsyncRequestTimingMiddleware)
 
+# Add monitoring middleware
+try:
+    monitoring = get_monitoring()
+    # The monitoring middleware will be used in the request handlers
+    logger.info("Monitoring middleware configured successfully")
+except Exception as e:
+    logger.error(f"Failed to configure monitoring middleware: {e}")
+    # Don't raise here - monitoring failure shouldn't stop the application
+
 # Add CORS middleware with settings-based configuration
 app.add_middleware(
     CORSMiddleware,
@@ -253,6 +284,9 @@ async def root(settings: Settings = Depends(get_app_settings)):
         "endpoints": {
             "mcp": "/mcp",
             "health": "/health",
+            "health_ready": "/health/ready",
+            "health_deep": "/health/deep",
+            "metrics": "/metrics",
             "performance": "/performance",
             "websocket": "/ws/{client_id}",
             "docs": "/docs" if settings.debug else "disabled",
@@ -263,79 +297,135 @@ async def root(settings: Settings = Depends(get_app_settings)):
 
 @app.get("/health")
 async def health_check():
-    """Comprehensive async health check endpoint"""
-    start_time = time.time()
-    
+    """Basic health check endpoint using unified monitoring system"""
     try:
-        # Check OpenProject connection with timeout
-        openproject_status = "disconnected"
-        openproject_latency = None
+        health_checker = get_health_checker(settings.openproject_url, settings.openproject_api_key)
+        result = await health_checker.check_liveness()
         
-        if openproject_client:
-            op_start = time.time()
-            try:
-                connection_ok = await asyncio.wait_for(
-                    openproject_client.check_connection(),
-                    timeout=5.0
-                )
-                openproject_latency = time.time() - op_start
-                openproject_status = "connected" if connection_ok else "disconnected"
-            except asyncio.TimeoutError:
-                openproject_status = "timeout"
-                openproject_latency = 5.0
-            except Exception as e:
-                openproject_status = f"error: {str(e)[:100]}"
-        
-        # Check HTTP client status (now managed by dependency injection)
-        http_client_status = "managed_by_di"
-        
-        # Check connection pool health
-        pool_manager = get_connection_pool_manager()
-        pool_health = await pool_manager.health_check_all()
-        pool_statuses = {}
-        for pool_type, is_healthy in pool_health.items():
-            pool_statuses[pool_type.value] = "healthy" if is_healthy else "unhealthy"
-        
-        # Calculate total health check time
-        total_time = time.time() - start_time
-        
-        health_data = {
-            "status": "healthy" if (openproject_status == "connected" and 
-                                  all(status == "healthy" for status in pool_statuses.values())) else "degraded",
-            "timestamp": time.time(),
-            "check_duration_ms": round(total_time * 1000, 2),
-            "services": {
-                "openproject": {
-                    "status": openproject_status,
-                    "latency_ms": round(openproject_latency * 1000, 2) if openproject_latency else None
-                },
-                "mcp_handler": "ready" if mcp_handler else "not_ready",
-                "http_client": http_client_status,
-                "websocket_connections": len(connection_manager.active_connections)
-            },
-            "connection_pools": pool_statuses,
-            "performance": {
-                "async_support": True,
-                "connection_pooling": True,
-                "caching": settings.cache_enabled,
-                "rate_limiting": settings.rate_limit_enabled
-            }
+        return {
+            "status": result.overall_status.value,
+            "timestamp": result.timestamp,
+            "checks": [
+                {
+                    "name": check.name,
+                    "status": check.status.value,
+                    "duration_ms": check.duration_ms,
+                    "message": check.message
+                }
+                for check in result.results
+            ]
         }
-        
-        # Return appropriate HTTP status
-        status_code = 200 if health_data["status"] == "healthy" else 503
-        return JSONResponse(content=health_data, status_code=status_code)
         
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return JSONResponse(
-            content={
-                "status": "unhealthy",
-                "error": str(e),
-                "timestamp": time.time()
+        raise HTTPException(status_code=500, detail="Health check failed")
+
+
+@app.get("/health/ready")
+async def readiness_check():
+    """Readiness check endpoint using unified monitoring system"""
+    try:
+        health_checker = get_health_checker(settings.openproject_url, settings.openproject_api_key)
+        result = await health_checker.check_readiness()
+        
+        return {
+            "status": result.overall_status.value,
+            "timestamp": result.timestamp,
+            "checks": [
+                {
+                    "name": check.name,
+                    "status": check.status.value,
+                    "duration_ms": check.duration_ms,
+                    "message": check.message
+                }
+                for check in result.results
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        raise HTTPException(status_code=500, detail="Readiness check failed")
+
+
+@app.get("/health/deep")
+async def deep_health_check():
+    """Deep health check endpoint using unified monitoring system"""
+    try:
+        health_checker = get_health_checker(settings.openproject_url, settings.openproject_api_key)
+        result = await health_checker.check_deep_health()
+        
+        return {
+            "status": result.overall_status.value,
+            "timestamp": result.timestamp,
+            "summary": {
+                "total_checks": result.total_checks,
+                "healthy_checks": result.healthy_checks,
+                "degraded_checks": result.degraded_checks,
+                "unhealthy_checks": result.unhealthy_checks
             },
-            status_code=500
+            "checks": [
+                {
+                    "name": check.name,
+                    "status": check.status.value,
+                    "duration_ms": check.duration_ms,
+                    "message": check.message,
+                    "details": check.details
+                }
+                for check in result.results
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Deep health check failed: {e}")
+        raise HTTPException(status_code=500, detail="Deep health check failed")
+
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Prometheus metrics endpoint"""
+    try:
+        monitoring = get_monitoring()
+        metrics_data = monitoring.metrics.get_metrics()
+        
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(
+            content=metrics_data,
+            media_type="text/plain; version=0.0.4"
         )
+        
+    except Exception as e:
+        logger.error(f"Failed to get metrics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get metrics")
+
+
+@app.get("/errors")
+async def get_errors_endpoint(request: Request):
+    """获取错误列表"""
+    return get_errors(request)
+
+
+@app.get("/errors/stats")
+async def get_error_stats_endpoint(request: Request):
+    """获取错误统计"""
+    return get_error_stats(request)
+
+
+@app.get("/errors/trends")
+async def get_error_trends_endpoint(request: Request):
+    """获取错误趋势"""
+    return get_error_trends(request)
+
+
+@app.post("/errors/resolve")
+async def resolve_error_endpoint(request: Request):
+    """解决错误"""
+    return resolve_error(request)
+
+
+@app.get("/errors/export")
+async def export_errors_endpoint(request: Request):
+    """导出错误"""
+    return export_errors(request)
 
 
 @app.get("/performance")
@@ -398,15 +488,16 @@ async def handle_mcp_request(
     request: Request,
     settings: Settings = Depends(get_app_settings)
 ):
-    """Handle MCP requests with async processing and proper error handling"""
+    """Handle MCP requests with async processing and monitoring"""
     request_data = None
+    start_time = time.time()
     
     try:
         # Ensure service is initialized
         if not mcp_handler:
             raise HTTPException(status_code=503, detail="MCP service not initialized")
         
-        # Read request body with size limit
+        # Read request body with size limit and monitoring
         try:
             request_data = await asyncio.wait_for(
                 request.json(),
@@ -422,11 +513,15 @@ async def handle_mcp_request(
         if content_length and int(content_length) > settings.max_request_size:
             raise HTTPException(status_code=413, detail="Request too large")
         
-        # Process MCP request asynchronously
-        response = await asyncio.wait_for(
-            mcp_handler.handle_request(request_data),
-            timeout=settings.request_timeout
-        )
+        # Process MCP request asynchronously with monitoring
+        monitoring = get_monitoring()
+        method = request_data.get('method', 'unknown')
+        
+        async with monitoring.monitor_mcp_operation("handle_request", "mcp_handler"):
+            response = await asyncio.wait_for(
+                mcp_handler.handle_request(request_data),
+                timeout=settings.request_timeout
+            )
         
         # Send real-time notification for MCP operations
         if request_data.get("method") in ["tools/call", "resources/read"]:
@@ -460,6 +555,13 @@ async def handle_mcp_request(
         
     except Exception as e:
         logger.error(f"MCP request processing failed: {e}")
+        
+        # Record MCP error in monitoring
+        try:
+            monitoring = get_monitoring()
+            monitoring.metrics.record_mcp_error(type(e).__name__, "handle_request")
+        except:
+            pass  # Don't fail if monitoring is not available
         
         # Return JSON-RPC error response
         error_response = {
@@ -653,6 +755,9 @@ if __name__ == "__main__":
     logger.info(f"Available endpoints:")
     logger.info(f"  - API docs: http://{settings.host}:{settings.port}/docs")
     logger.info(f"  - Health check: http://{settings.host}:{settings.port}/health")
+    logger.info(f"  - Readiness check: http://{settings.host}:{settings.port}/health/ready")
+    logger.info(f"  - Deep health check: http://{settings.host}:{settings.port}/health/deep")
+    logger.info(f"  - Prometheus metrics: http://{settings.host}:{settings.port}/metrics")
     logger.info(f"  - Performance stats: http://{settings.host}:{settings.port}/performance")
     logger.info(f"  - MCP endpoint: http://{settings.host}:{settings.port}/mcp")
     logger.info(f"  - WebSocket: ws://{settings.host}:{settings.port}/ws/{{client_id}}")

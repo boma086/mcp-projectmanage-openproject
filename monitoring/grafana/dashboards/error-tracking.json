@@ -1,0 +1,439 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "MCP OpenProject - Error Tracking Dashboard",
+    "tags": ["mcp", "openproject", "error-tracking"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Error Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "increase(mcp_errors_total[1h])",
+            "legendFormat": "Total Errors"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 10
+                },
+                {
+                  "color": "red",
+                  "value": 50
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Error Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(mcp_errors_total[5m])",
+            "legendFormat": "Errors/Minute"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "/m",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 0.1
+                },
+                {
+                  "color": "red",
+                  "value": 1
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Critical Errors",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "increase(mcp_errors_total{severity=\"critical\"}[1h])",
+            "legendFormat": "Critical Errors"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "red",
+                  "value": 1
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 0
+        }
+      },
+      {
+        "id": 4,
+        "title": "Errors by Severity",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "increase(mcp_errors_total[1h])",
+            "legendFormat": "{{severity}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 5,
+        "title": "Errors by Service",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "increase(mcp_errors_total[1h])",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      },
+      {
+        "id": 6,
+        "title": "Error Rate Over Time",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(mcp_errors_total[5m])",
+            "legendFormat": "Total Errors"
+          },
+          {
+            "expr": "rate(mcp_errors_total{severity=\"critical\"}[5m])",
+            "legendFormat": "Critical Errors"
+          },
+          {
+            "expr": "rate(mcp_errors_total{severity=\"high\"}[5m])",
+            "legendFormat": "High Severity"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "/m"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        }
+      },
+      {
+        "id": 7,
+        "title": "Errors by Category",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(mcp_errors_total[5m])",
+            "legendFormat": "{{category}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "/m"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 24
+        }
+      },
+      {
+        "id": 8,
+        "title": "Error Response Time",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{status_code>=\"400\"}[5m])) by (le, service))",
+            "legendFormat": "P50 - {{service}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{status_code>=\"400\"}[5m])) by (le, service))",
+            "legendFormat": "P95 - {{service}}"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{status_code>=\"400\"}[5m])) by (le, service))",
+            "legendFormat": "P99 - {{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 32
+        }
+      },
+      {
+        "id": 9,
+        "title": "Error Types Heatmap",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "increase(mcp_errors_total[1h])",
+            "legendFormat": "{{error_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": 10,
+        "title": "Service Error Rates",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(mcp_errors_total{service=\"http-solution\"}[5m])",
+            "legendFormat": "HTTP Solution"
+          },
+          {
+            "expr": "rate(mcp_errors_total{service=\"fastapi-solution\"}[5m])",
+            "legendFormat": "FastAPI Solution"
+          },
+          {
+            "expr": "rate(mcp_errors_total{service=\"fastmcp-solution\"}[5m])",
+            "legendFormat": "FastMCP Solution"
+          },
+          {
+            "expr": "rate(mcp_errors_total{service=\"typescript-solution\"}[5m])",
+            "legendFormat": "TypeScript Solution"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "/m"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 48
+        }
+      },
+      {
+        "id": 11,
+        "title": "Error Resolution Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "increase(mcp_errors_resolved_total[1h]) / increase(mcp_errors_total[1h]) * 100",
+            "legendFormat": "Resolution Rate %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 50
+                },
+                {
+                  "color": "green",
+                  "value": 90
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 56
+        }
+      },
+      {
+        "id": 12,
+        "title": "Average Resolution Time",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(mcp_error_resolution_time_seconds_sum[1h]) / rate(mcp_error_resolution_time_seconds_count[1h])",
+            "legendFormat": "Avg Resolution Time"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 300
+                },
+                {
+                  "color": "red",
+                  "value": 3600
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 56
+        }
+      },
+      {
+        "id": 13,
+        "title": "Active Unresolved Errors",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "mcp_errors_unresolved",
+            "legendFormat": "Unresolved Errors"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 5
+                },
+                {
+                  "color": "red",
+                  "value": 20
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 56
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}

@@ -248,6 +248,182 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ---
 
+## 🐳 容器化部署
+
+本项目支持完整的容器化部署，包含 Docker 和 Kubernetes 两种部署方式。
+
+### 快速开始 (Docker Compose)
+
+#### 开发环境
+```bash
+# 启动所有服务 (HTTP + FastAPI + 基础设施)
+docker-compose -f docker-compose.dev.yml up -d
+
+# 查看服务状态
+docker-compose -f docker-compose.dev.yml ps
+
+# 查看日志
+docker-compose -f docker-compose.dev.yml logs -f
+```
+
+#### 生产环境
+```bash
+# 配置生产环境变量
+cp .env.production .env
+# 编辑 .env 文件，设置实际的生产配置
+
+# 启动生产服务
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+### 服务访问 (Docker)
+
+| 服务 | 开发环境端口 | 生产环境端口 | 说明 |
+|------|-------------|-------------|------|
+| HTTP 解决方案 | 8010 | 8010 | 生产推荐方案 |
+| FastAPI 解决方案 | 8020 | 8020 | 开发推荐方案 |
+| Nginx 负载均衡 | - | 80 | 生产环境入口 |
+| PostgreSQL | 5432 | 5432 | 数据库 |
+| Redis | 6379 | 6379 | 缓存 |
+| Prometheus | - | 9090 | 监控指标 |
+| Grafana | - | 3000 | 监控仪表板 |
+
+### Kubernetes 部署
+
+#### 快速部署
+```bash
+# 部署到 Kubernetes 集群
+./deploy/kubernetes.sh
+
+# 或者手动部署
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/secrets.yaml
+kubectl apply -f k8s/configmaps.yaml
+kubectl apply -f k8s/infrastructure.yaml
+kubectl apply -f k8s/http-solution.yaml
+kubectl apply -f k8s/fastapi-solution.yaml
+kubectl apply -f k8s/monitoring.yaml
+```
+
+#### 验证部署
+```bash
+# 检查 Pod 状态
+kubectl get pods -n mcp-openproject
+
+# 检查服务状态
+kubectl get svc -n mcp-openproject
+
+# 查看部署进度
+kubectl rollout status deployment/http-solution -n mcp-openproject
+kubectl rollout status deployment/fastapi-solution -n mcp-openproject
+```
+
+### 配置管理
+
+#### 环境变量
+项目包含多个环境配置文件：
+
+- `.env` - 主配置文件 (包含所有变量和默认值)
+- `.env.development` - 开发环境配置
+- `.env.production` - 生产环境配置
+- `.env.test` - 测试环境配置
+
+#### 关键配置项
+```bash
+# OpenProject 配置
+OPENPROJECT_URL=https://your-openproject.com
+OPENPROJECT_API_KEY=your-api-key-here
+
+# 数据库配置
+DATABASE_URL=postgresql://mcpuser:mcppass@postgres:5432/mcpdb
+
+# Redis 配置
+REDIS_URL=redis://redis:6379
+
+# 安全配置
+SECRET_KEY=your-super-secret-key-here
+JWT_SECRET_KEY=your-super-secret-jwt-key-here
+```
+
+### 监控和日志
+
+#### 健康检查
+所有服务都包含健康检查端点：
+- HTTP 解决方案: `http://localhost:8010/health`
+- FastAPI 解决方案: `http://localhost:8020/health`
+
+#### 监控指标
+- Prometheus: `http://localhost:9090` (生产环境)
+- Grafana: `http://localhost:3000` (生产环境)
+
+#### 日志查看
+```bash
+# Docker Compose 日志
+docker-compose -f docker-compose.dev.yml logs -f http-solution
+docker-compose -f docker-compose.dev.yml logs -f fastapi-solution
+
+# Kubernetes 日志
+kubectl logs -f deployment/http-solution -n mcp-openproject
+kubectl logs -f deployment/fastapi-solution -n mcp-openproject
+```
+
+### 验证和测试
+
+#### 部署验证
+```bash
+# 运行完整的部署验证
+./scripts/validate-deployment.sh validate
+
+# 仅验证 Docker 配置
+./scripts/validate-deployment.sh docker
+
+# 仅验证 Docker Compose
+./scripts/validate-deployment.sh compose
+
+# 仅验证 Kubernetes
+./scripts/validate-deployment.sh k8s
+```
+
+#### 功能测试
+```bash
+# 测试 HTTP 解决方案
+curl -f http://localhost:8010/health
+
+# 测试 FastAPI 解决方案
+curl -f http://localhost:8020/health
+
+# 测试 MCP 端点
+curl -X POST http://localhost:8010/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "generate_report_from_template", "arguments": {"template_id": "japanese_weekly_report", "project_id": "1"}}}'
+```
+
+### 生产环境注意事项
+
+1. **安全配置**
+   - 替换所有默认密码和密钥
+   - 配置 SSL/TLS 证书
+   - 启用防火墙和网络策略
+
+2. **资源规划**
+   - 根据负载调整 Pod 副本数
+   - 配置适当的资源限制和请求
+   - 设置自动扩缩容策略
+
+3. **备份和恢复**
+   - 定期备份数据库
+   - 配置持久化存储
+   - 测试恢复流程
+
+4. **监控告警**
+   - 配置 Prometheus 告警规则
+   - 设置 Grafana 仪表板
+   - 配置日志聚合和分析
+
+> 📖 **详细部署文档**: 查看 [VALIDATION_SUMMARY.md](VALIDATION_SUMMARY.md) 获取完整的验证结果和部署指南。
+
+---
+
 ## 📖 扩展文档
 
 查看 [docs/](docs/) 目录获取详细文档：

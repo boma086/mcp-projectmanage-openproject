@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-openproject
+  labels:
+    name: mcp-openproject
+    app: mcp-openproject
+---
+# Resource limits for the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mcp-resource-quota
+  namespace: mcp-openproject
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 4Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+    persistentvolumeclaims: "10"
+    requests.storage: 50Gi
+---
+# Limit range for default resource limits
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mcp-limit-range
+  namespace: mcp-openproject
+spec:
+  limits:
+  - default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "250m"
+      memory: "256Mi"
+    type: Container

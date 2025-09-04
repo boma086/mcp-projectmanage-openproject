@@ -1,0 +1,168 @@
+# Shared Web Assets ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-web-assets
+  namespace: mcp-openproject
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>OpenProject MCP Integration</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                margin: 0;
+                padding: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .container {
+                background: white;
+                border-radius: 12px;
+                padding: 3rem;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                max-width: 800px;
+                width: 90%;
+                text-align: center;
+            }
+            h1 {
+                color: #2d3748;
+                margin-bottom: 1rem;
+                font-size: 2.5rem;
+                font-weight: 700;
+            }
+            .subtitle {
+                color: #718096;
+                font-size: 1.25rem;
+                margin-bottom: 2rem;
+            }
+            .solutions {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 1.5rem;
+                margin: 2rem 0;
+            }
+            .solution-card {
+                background: #f7fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                padding: 1.5rem;
+                transition: transform 0.2s, box-shadow 0.2s;
+            }
+            .solution-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+            }
+            .solution-name {
+                font-weight: 600;
+                color: #2d3748;
+                margin-bottom: 0.5rem;
+            }
+            .solution-port {
+                color: #667eea;
+                font-weight: 500;
+                margin-bottom: 1rem;
+            }
+            .solution-link {
+                display: inline-block;
+                background: #667eea;
+                color: white;
+                padding: 0.5rem 1rem;
+                border-radius: 6px;
+                text-decoration: none;
+                transition: background 0.2s;
+            }
+            .solution-link:hover {
+                background: #5a67d8;
+            }
+            .health-check {
+                margin-top: 2rem;
+                padding: 1rem;
+                background: #edf2f7;
+                border-radius: 6px;
+                font-family: monospace;
+                font-size: 0.9rem;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>OpenProject MCP Integration</h1>
+            <p class="subtitle">Model Context Protocol Solutions for OpenProject</p>
+            
+            <div class="solutions">
+                <div class="solution-card">
+                    <div class="solution-name">HTTP Solution</div>
+                    <div class="solution-port">Port: 8010</div>
+                    <a href="/http/" class="solution-link">Access HTTP API</a>
+                </div>
+                
+                <div class="solution-card">
+                    <div class="solution-name">FastAPI Solution</div>
+                    <div class="solution-port">Port: 8020</div>
+                    <a href="/fastapi/" class="solution-link">Access FastAPI</a>
+                </div>
+                
+                <div class="solution-card">
+                    <div class="solution-name">FastMCP Solution</div>
+                    <div class="solution-port">Port: 8030</div>
+                    <a href="/fastmcp/" class="solution-link">Access FastMCP</a>
+                </div>
+                
+                <div class="solution-card">
+                    <div class="solution-name">TypeScript Solution</div>
+                    <div class="solution-port">Port: 8040</div>
+                    <a href="/typescript/" class="solution-link">Access TypeScript</a>
+                </div>
+            </div>
+            
+            <div class="health-check">
+                <strong>Health Check:</strong><br>
+                HTTP: <a href="/http/health">/http/health</a><br>
+                FastAPI: <a href="/fastapi/health">/fastapi/health</a><br>
+                FastMCP: <a href="/fastmcp/health">/fastmcp/health</a><br>
+                TypeScript: <a href="/typescript/health">/typescript/health</a>
+            </div>
+        </div>
+    </body>
+    </html>
+---
+# Template Editor
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: template-editor
+  namespace: mcp-openproject
+data:
+  template_editor.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Template Editor</title>
+        <style>
+            body { font-family: monospace; padding: 20px; }
+            textarea { width: 100%; height: 400px; }
+            button { padding: 10px 20px; margin: 10px 0; }
+        </style>
+    </head>
+    <body>
+        <h1>Template Editor</h1>
+        <textarea id="template"></textarea>
+        <button onclick="saveTemplate()">Save Template</button>
+        <script>
+            function saveTemplate() {
+                // Template save functionality
+                console.log('Template saved');
+            }
+        </script>
+    </body>
+    </html>

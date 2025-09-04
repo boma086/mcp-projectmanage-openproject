@@ -1,0 +1,201 @@
+site_name: OpenProject MCP Integration Documentation
+site_description: Comprehensive documentation for OpenProject MCP integration solutions
+site_author: OpenProject MCP Team
+site_url: https://your-domain.com/docs
+
+repo_name: mcp-projectmanage-openproject
+repo_url: https://github.com/your-username/mcp-projectmanage-openproject
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/overview.md
+      - Quick Start: getting-started/quick-start.md
+      - Installation: getting-started/installation.md
+      - Configuration: getting-started/configuration.md
+  - Architecture:
+      - Architecture Guide: architecture.md
+      - Solution Comparison: architecture/solution-comparison.md
+      - System Design: architecture/system-design.md
+      - Performance: architecture/performance.md
+  - Solutions:
+      - HTTP Solution: solutions/http-solution.md
+      - FastAPI Solution: solutions/fastapi-solution.md
+      - FastMCP Solution: solutions/fastmcp-solution.md
+      - TypeScript Solution: solutions/typescript-solution.md
+  - Implementation:
+      - Implementation Examples: implementation.md
+      - Code Samples: implementation/code-samples.md
+      - Best Practices: implementation/best-practices.md
+      - Patterns: implementation/patterns.md
+  - Deployment:
+      - Deployment Guide: deployment.md
+      - Docker Deployment: deployment/docker.md
+      - Kubernetes Deployment: deployment/kubernetes.md
+      - Cloud Deployment: deployment/cloud.md
+      - Production Setup: deployment/production.md
+  - API Documentation:
+      - API Overview: api.md
+      - HTTP API: api/http-api.md
+      - FastAPI API: api/fastapi-api.md
+      - MCP Protocol: api/mcp-protocol.md
+      - TypeScript SDK: api/typescript-sdk.md
+      - Authentication: api/authentication.md
+  - Operations:
+      - Operational Runbooks: operations.md
+      - Monitoring: operations/monitoring.md
+      - Maintenance: operations/maintenance.md
+      - Backup & Recovery: operations/backup-recovery.md
+      - Security: operations/security.md
+  - Internationalization:
+      - i18n Overview: internationalization.md
+      - Translation Management: internationalization/translation-management.md
+      - Localization: internationalization/localization.md
+      - Testing: internationalization/testing.md
+  - Troubleshooting:
+      - Troubleshooting Guide: troubleshooting.md
+      - Common Issues: troubleshooting/common-issues.md
+      - FAQ: troubleshooting/faq.md
+      - Debugging: troubleshooting/debugging.md
+  - Reference:
+      - Configuration Reference: reference/configuration.md
+      - Error Codes: reference/error-codes.md
+      - Environment Variables: reference/environment-variables.md
+      - API Reference: reference/api-reference.md
+  - Contributing:
+      - Contributing Guide: contributing.md
+      - Development Setup: contributing/development-setup.md
+      - Testing: contributing/testing.md
+      - Documentation: contributing/documentation.md
+      - Release Process: contributing/release-process.md
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - header.autohide
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  favicon: assets/favicon.png
+  logo: assets/logo.png
+
+plugins:
+  - search
+  - mkdocs-material
+  - mkdocs-mermaid2:
+      enabled: true
+  - mkdocs-minify-plugin:
+      minify_html: true
+  - mkdocs-git-revision-date-localized:
+      type: date
+      timezone: UTC
+      locale: en
+      fallback_to_build_date: true
+  - mkdocs-section-index
+  - mkdocs-literate-nav:
+      nav_file: SUMMARY.md
+  - mkdocs-gen-files:
+      scripts:
+        - scripts/generate-api-docs.py
+        - scripts/generate-config-docs.py
+  - mkdocs-awesome-pages-source:
+      filename: .pages
+      strict: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - codehilite:
+      guess_lang: false
+      use_pygments: true
+      pygments_style: github
+      linenums: true
+  - def_list
+  - footnotes
+  - meta
+  - md_in_html
+  - toc:
+      permalink: true
+      permalink_title: Link to this section
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: squidfunk
+      repo: mkdocs-material
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/your-username/mcp-projectmanage-openproject
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/your-project
+    - icon: fontawesome/solid/envelope
+      link: mailto:support@example.com
+  version:
+    provider: mike
+    default: latest
+
+extra_css:
+  - stylesheets/extra.css
+  - https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css
+
+extra_javascript:
+  - javascripts/extra.js
+  - https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.0/MathJax.js?config=TeX-MML-AM_CHTML
+
+watch:
+  - docs
+  - mkdocs.yml
+
+strict: true
+use_directory_urls: true

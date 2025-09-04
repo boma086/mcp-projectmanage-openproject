@@ -9,8 +9,8 @@ import threading
 from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.responses import JSONResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -26,6 +26,14 @@ from dependencies import (
     cleanup_dependencies, SyncAsyncAdapter
 )
 from routers import projects_router, work_packages_router, users_router
+from monitoring import (
+    get_monitoring, get_health_checker, update_health_checker_config,
+    monitor_http_request, monitor_mcp_operation
+)
+from monitoring.error_tracking import (
+    get_errors, get_error_stats, get_error_trends, 
+    resolve_error, export_errors
+)
 
 # 导入核心库
 from mcp_core import (
@@ -65,6 +73,12 @@ async def lifespan(app: FastAPI):
     # 启动时初始化
     logger.info("启动 HTTP MCP 服务...")
     initialize_core_config()
+    
+    # 初始化监控
+    logger.info("初始化监控系统...")
+    monitoring = get_monitoring()
+    health_checker = get_health_checker(http_config.openproject_url, http_config.openproject_api_key)
+    logger.info("监控系统初始化完成")
     
     yield
     
@@ -107,6 +121,8 @@ app.include_router(projects_router)
 app.include_router(work_packages_router)
 app.include_router(users_router)
 
+# 错误跟踪端点已通过函数导入
+
 
 @app.get("/")
 async def root():
@@ -138,42 +154,135 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """健康检查端点"""
+    """基本健康检查端点"""
     try:
-        # 尝试获取服务实例来检查状态
-        services_status = {
-            "mcp_handler": "not_ready",
-            "openproject": "disconnected"
-        }
-        
-        try:
-            # 尝试获取适配器并检查连接
-            from dependencies import get_openproject_adapter as _get_adapter
-            adapter = _get_adapter()
-            connection_ok = adapter.check_connection()
-            services_status["openproject"] = "connected" if connection_ok else "disconnected"
-            services_status["mcp_handler"] = "ready"
-        except Exception as adapter_error:
-            logger.warning(f"适配器检查失败: {adapter_error}")
-            services_status["openproject"] = "error"
-        
-        overall_status = "healthy" if all(
-            status in ["ready", "connected"] for status in services_status.values()
-        ) else "degraded"
+        health_checker = get_health_checker(http_config.openproject_url, http_config.openproject_api_key)
+        result = health_checker.check_liveness()
         
         return {
-            "status": overall_status,
-            "services": services_status,
-            "config": {
-                "openproject_url": http_config.openproject_url,
-                "port": http_config.port,
-                "log_level": http_config.log_level
-            }
+            "status": result.overall_status.value,
+            "timestamp": result.timestamp,
+            "checks": [
+                {
+                    "name": check.name,
+                    "status": check.status.value,
+                    "duration_ms": check.duration_ms,
+                    "message": check.message
+                }
+                for check in result.results
+            ]
         }
         
     except Exception as e:
         logger.error(f"健康检查失败: {e}")
         raise HTTPException(status_code=500, detail="Health check failed")
+
+
+@app.get("/health/ready")
+async def readiness_check():
+    """就绪检查端点"""
+    try:
+        health_checker = get_health_checker(http_config.openproject_url, http_config.openproject_api_key)
+        result = health_checker.check_readiness()
+        
+        return {
+            "status": result.overall_status.value,
+            "timestamp": result.timestamp,
+            "checks": [
+                {
+                    "name": check.name,
+                    "status": check.status.value,
+                    "duration_ms": check.duration_ms,
+                    "message": check.message
+                }
+                for check in result.results
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"就绪检查失败: {e}")
+        raise HTTPException(status_code=500, detail="Readiness check failed")
+
+
+@app.get("/health/deep")
+async def deep_health_check():
+    """深度健康检查端点"""
+    try:
+        health_checker = get_health_checker(http_config.openproject_url, http_config.openproject_api_key)
+        result = health_checker.check_deep_health()
+        
+        return {
+            "status": result.overall_status.value,
+            "timestamp": result.timestamp,
+            "summary": {
+                "total_checks": result.total_checks,
+                "healthy_checks": result.healthy_checks,
+                "degraded_checks": result.degraded_checks,
+                "unhealthy_checks": result.unhealthy_checks
+            },
+            "checks": [
+                {
+                    "name": check.name,
+                    "status": check.status.value,
+                    "duration_ms": check.duration_ms,
+                    "message": check.message,
+                    "details": check.details
+                }
+                for check in result.results
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"深度健康检查失败: {e}")
+        raise HTTPException(status_code=500, detail="Deep health check failed")
+
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Prometheus 指标端点"""
+    try:
+        monitoring = get_monitoring()
+        metrics_data = monitoring.metrics.get_metrics()
+        
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(
+            content=metrics_data,
+            media_type="text/plain; version=0.0.4"
+        )
+        
+    except Exception as e:
+        logger.error(f"获取指标失败: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get metrics")
+
+
+@app.get("/errors")
+async def get_errors_endpoint(request: Request):
+    """获取错误列表"""
+    return get_errors(request)
+
+
+@app.get("/errors/stats")
+async def get_error_stats_endpoint(request: Request):
+    """获取错误统计"""
+    return get_error_stats(request)
+
+
+@app.get("/errors/trends")
+async def get_error_trends_endpoint(request: Request):
+    """获取错误趋势"""
+    return get_error_trends(request)
+
+
+@app.post("/errors/resolve")
+async def resolve_error_endpoint(request: Request):
+    """解决错误"""
+    return resolve_error(request)
+
+
+@app.get("/errors/export")
+async def export_errors_endpoint(request: Request):
+    """导出错误"""
+    return export_errors(request)
 
 
 @app.post("/mcp")
@@ -182,31 +291,46 @@ async def handle_mcp_request(
     mcp_handler: MCPHandler = Depends(get_mcp_handler)
 ):
     """处理 MCP 请求 - 主要 API 端点"""
+    monitoring = get_monitoring()
     request_data = None
-    try:
-        # 读取请求体
-        request_data = await request.json()
-        logger.info(f"收到 MCP 请求: {request_data.get('method', 'unknown')}")
-        
-        # 使用核心库的 MCP 处理器（使用依赖注入）
-        response = await mcp_handler.handle_request(request_data)
-        
-        return JSONResponse(content=response)
-        
-    except Exception as e:
-        logger.error(f"处理 MCP 请求失败: {e}")
-        
-        # 返回 JSON-RPC 错误响应
-        error_response = {
-            "jsonrpc": "2.0",
-            "id": request_data.get("id") if request_data else None,
-            "error": {
-                "code": -32603,
-                "message": "Internal error",
-                "data": str(e)
+    
+    # 使用监控中间件跟踪请求
+    with monitoring.monitor_request(request) as metrics:
+        try:
+            # 读取请求体
+            request_data = await request.json()
+            method = request_data.get('method', 'unknown')
+            
+            # 使用监控装饰器跟踪 MCP 操作
+            @monitor_mcp_operation("handle_request", "mcp_handler")
+            def process_request():
+                return mcp_handler.handle_request(request_data)
+            
+            response = process_request()
+            
+            # 更新响应状态码
+            metrics.status_code = 200
+            
+            return JSONResponse(content=response)
+            
+        except Exception as e:
+            # 更新错误指标
+            metrics.status_code = 500
+            metrics.error = str(e)
+            
+            logger.error(f"处理 MCP 请求失败: {e}")
+            
+            # 返回 JSON-RPC 错误响应
+            error_response = {
+                "jsonrpc": "2.0",
+                "id": request_data.get("id") if request_data else None,
+                "error": {
+                    "code": -32603,
+                    "message": "Internal error",
+                    "data": str(e)
+                }
             }
-        }
-        return JSONResponse(content=error_response)
+            return JSONResponse(content=error_response, status_code=500)
 
 
 

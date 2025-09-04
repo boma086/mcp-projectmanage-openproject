@@ -1,0 +1,216 @@
+# Infrastructure Services Configuration
+
+# Redis Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: mcp-openproject
+data:
+  redis.conf: |
+    maxmemory 256mb
+    maxmemory-policy allkeys-lru
+    appendonly yes
+    save 900 1
+    save 300 10
+    save 60 10000
+    tcp-keepalive 300
+    timeout 0
+    databases 16
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: mcp-openproject
+  labels:
+    app: redis
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 6379
+          name: redis
+          protocol: TCP
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 1
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-config
+      - name: redis-data
+        emptyDir: {}
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: mcp-openproject
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: redis
+  type: ClusterIP
+---
+# PostgreSQL Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: mcp-openproject
+data:
+  POSTGRES_DB: "mcpdb"
+  POSTGRES_USER: "mcpuser"
+  PGDATA: "/var/lib/postgresql/data/pgdata"
+---
+# PostgreSQL Persistent Volume Claim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: mcp-openproject
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+---
+# PostgreSQL Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: mcp-openproject
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5432
+          name: postgres
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: postgres-config
+        - secretRef:
+            name: postgres-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - mcpuser
+            - -d
+            - mcpdb
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - mcpuser
+            - -d
+            - mcpdb
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: mcp-openproject
+  labels:
+    app: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  type: ClusterIP
