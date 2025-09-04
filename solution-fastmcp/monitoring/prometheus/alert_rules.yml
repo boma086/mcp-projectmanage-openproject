@@ -1,0 +1,129 @@
+# Alert rules for FastMCP Solution
+groups:
+  - name: fastmcp-alerts
+    interval: 30s
+    rules:
+      # Service availability alerts
+      - alert: FastMCPServiceDown
+        expr: up{job="fastmcp-solution"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: fastmcp
+        annotations:
+          summary: "FastMCP service is down"
+          description: "FastMCP service instance {{ $labels.instance }} has been down for more than 1 minute"
+
+      - alert: FastMCPHighErrorRate
+        expr: rate(fastmcp_http_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: fastmcp
+        annotations:
+          summary: "FastMCP high error rate"
+          description: "FastMCP service has a high error rate of {{ $value }} errors per second over the last 5 minutes"
+
+      - alert: FastMCPHighLatency
+        expr: histogram_quantile(0.95, rate(fastmcp_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: fastmcp
+        annotations:
+          summary: "FastMCP high latency"
+          description: "FastMCP service has high 95th percentile latency of {{ $value }} seconds over the last 5 minutes"
+
+      # Resource usage alerts
+      - alert: FastMCPHighMemoryUsage
+        expr: container_memory_usage_bytes{container="fastmcp-solution"} / container_spec_memory_limit_bytes{container="fastmcp-solution"} > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: fastmcp
+        annotations:
+          summary: "FastMCP high memory usage"
+          description: "FastMCP service is using {{ $value | humanizePercentage }} of memory limit"
+
+      - alert: FastMCPHighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{container="fastmcp-solution"}[5m]) / container_spec_cpu_quota{container="fastmcp-solution"} > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: fastmcp
+        annotations:
+          summary: "FastMCP high CPU usage"
+          description: "FastMCP service is using {{ $value | humanizePercentage }} of CPU limit"
+
+      # MCP specific alerts
+      - alert: FastMCPHighSessionCount
+        expr: fastmcp_active_sessions > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: fastmcp
+        annotations:
+          summary: "FastMCP high session count"
+          description: "FastMCP service has {{ $value }} active sessions, approaching the limit"
+
+      - alert: FastMCPFailedMCPRequests
+        expr: rate(fastmcp_mcp_operations_total{status="error"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: fastmcp
+        annotations:
+          summary: "FastMCP high MCP request failure rate"
+          description: "FastMCP service has a high MCP request failure rate of {{ $value }} per second"
+
+      # Redis alerts
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: redis
+        annotations:
+          summary: "Redis service is down"
+          description: "Redis service instance {{ $labels.instance }} has been down for more than 1 minute"
+
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis high memory usage"
+          description: "Redis is using {{ $value | humanizePercentage }} of memory limit"
+
+      - alert: RedisSlowlog
+        expr: redis_slowlog_length > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis slow queries detected"
+          description: "Redis has {{ $value }} slow queries in the slowlog"
+
+      # OpenProject integration alerts
+      - alert: OpenProjectIntegrationDown
+        expr: fastmcp_openproject_health{status="unhealthy"} == 1
+        for: 2m
+        labels:
+          severity: critical
+          component: openproject-integration
+        annotations:
+          summary: "OpenProject integration is unhealthy"
+          description: "FastMCP cannot connect to OpenProject API"
+
+      - alert: OpenProjectHighLatency
+        expr: fastmcp_openproject_request_duration_seconds{quantile="0.95"} > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: openproject-integration
+        annotations:
+          summary: "OpenProject API high latency"
+          description: "OpenProject API calls have high 95th percentile latency of {{ $value }} seconds"
