@@ -52,11 +52,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
-          cpus: '0.5'
+          memory: 512Mi
+          cpu: '500m'
         reservations:
-          memory: 256M
-          cpus: '0.25'
+          memory: 256Mi
+          cpu: '250m'
 
   # OpenProject Service (for development/testing)
   openproject:
