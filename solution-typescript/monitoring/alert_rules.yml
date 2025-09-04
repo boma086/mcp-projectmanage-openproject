@@ -1,0 +1,93 @@
+# Alert rules for TypeScript Solution
+groups:
+  - name: typescript-solution-alerts
+    rules:
+      # High memory usage
+      - alert: TypeScriptSolutionHighMemoryUsage
+        expr: nodejs_heap_used_bytes{job="typescript-solution"} / nodejs_heap_total_bytes{job="typescript-solution"} * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High memory usage in TypeScript solution"
+          description: "TypeScript solution memory usage is {{ $value }}% for more than 5 minutes"
+
+      # High CPU usage
+      - alert: TypeScriptSolutionHighCPUUsage
+        expr: rate(process_cpu_user_seconds_total{job="typescript-solution"}[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage in TypeScript solution"
+          description: "TypeScript solution CPU usage is {{ $value }}% for more than 5 minutes"
+
+      # Service down
+      - alert: TypeScriptSolutionDown
+        expr: up{job="typescript-solution"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TypeScript solution is down"
+          description: "TypeScript solution has been down for more than 1 minute"
+
+      # High response time
+      - alert: TypeScriptSolutionHighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="typescript-solution"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time in TypeScript solution"
+          description: "95th percentile response time is {{ $value }}s for more than 5 minutes"
+
+      # High error rate
+      - alert: TypeScriptSolutionHighErrorRate
+        expr: rate(http_requests_total{status=~"5..", job="typescript-solution"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate in TypeScript solution"
+          description: "HTTP 5xx error rate is {{ $value }} requests per second for more than 5 minutes"
+
+      # OpenProject connection issues
+      - alert: TypeScriptSolutionOpenProjectConnectionFailed
+        expr: openproject_connection_up{job="typescript-solution"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OpenProject connection failed"
+          description: "TypeScript solution cannot connect to OpenProject for more than 2 minutes"
+
+      # Health check failures
+      - alert: TypeScriptSolutionHealthCheckFailed
+        expr: health_check_status{job="typescript-solution"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health check failed"
+          description: "TypeScript solution health check failed for more than 1 minute"
+
+      # High event loop delay
+      - alert: TypeScriptSolutionHighEventLoopDelay
+        expr: nodejs_eventloop_lag_seconds{job="typescript-solution"} > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High event loop delay"
+          description: "TypeScript solution event loop delay is {{ $value }}s for more than 5 minutes"
+
+      # Garbage collection issues
+      - alert: TypeScriptSolutionHighGCTime
+        expr: rate(nodejs_gc_duration_seconds_sum{job="typescript-solution"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High garbage collection time"
+          description: "TypeScript solution garbage collection time is {{ $value }}s for more than 5 minutes"
