@@ -149,3 +149,7 @@ jspm_packages/
 
 # TernJS port file
 .tern-port
+
+# CCPM and Claude
+ccpm/
+.claude/

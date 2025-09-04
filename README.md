@@ -1,3 +1,14 @@
+# 📚 Documentation / 文档
+
+> **Complete documentation is now available in the [docs/](docs/) directory**  
+> **完整文档现已可在 [docs/](docs/) 目录中找到**
+
+For detailed information about architecture, implementation, and deployment, please refer to the comprehensive documentation.
+
+有关架构、实施和部署的详细信息，请参阅综合文档。
+
+---
+
 # VS Code 调试方法
 
 本项目已提供统一的 VS Code 调试配置，所有开发者可直接在 VS Code 中点击“运行和调试”按钮进行断点调试。

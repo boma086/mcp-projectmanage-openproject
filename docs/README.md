@@ -1,300 +1,77 @@
-# Documentation
+# Documentation / 文档
 
-This directory contains the source files for the OpenProject MCP integration documentation, built with MkDocs.
+Welcome to the OpenProject MCP Integration documentation. This guide provides comprehensive information about the project architecture, implementation, and usage.
 
-## 📁 Directory Structure
+欢迎来到 OpenProject MCP 集成文档。本指南提供有关项目架构、实现和使用的全面信息。
 
-```
-docs/
-├── mkdocs.yml                     # MkDocs configuration
-├── requirements.txt              # Python dependencies
-├── build.sh                      # Build script
-├── index.md                      # Homepage
-├── assets/                       # Static assets
-├── stylesheets/                  # Custom CSS
-├── javascripts/                   # Custom JavaScript
-├── scripts/                      # Documentation generation scripts
-│   ├── generate-api-docs.py      # API documentation generator
-│   └── generate-config-docs.py    # Configuration documentation generator
-├── getting-started/              # Getting started guides
-├── architecture/                 # Architecture documentation
-├── solutions/                    # Solution-specific documentation
-├── implementation/               # Implementation examples
-├── deployment/                   # Deployment guides
-├── api/                          # API documentation
-├── operations/                   # Operations documentation
-├── internationalization/         # i18n documentation
-├── troubleshooting/              # Troubleshooting guides
-├── reference/                    # Reference documentation
-└── contributing/                 # Contributing guides
-```
+## Quick Navigation / 快速导航
 
-## 🚀 Quick Start
+### Getting Started / 入门指南
+- [Quick Start](getting-started/QUICKSTART.md) - Fast setup instructions
+- [Installation](getting-started/INSTALLATION.md) - Detailed installation guide
+- [Configuration](getting-started/CONFIGURATION.md) - Environment setup
 
-### Prerequisites
+### Architecture / 架构
+- [Overview](architecture/OVERVIEW.md) - Architecture overview
+- [Solution Types](architecture/SOLUTION_TYPES.md) - Four solution types comparison
+- [Protocol](architecture/PROTOCOL.md) - MCP protocol implementation
 
-- Python 3.8+
-- MkDocs (installed via requirements.txt)
+### Implementation / 实现
+- [Summary](implementation/SUMMARY.md) - Implementation summary
+- [HTTP Solution](implementation/HTTP_SOLUTION.md) - HTTP solution details
+- [FastAPI Solution](implementation/FASTAPI_SOLUTION.md) - FastAPI solution details
+- [FastMCP Solution](implementation/FASTMCP_SOLUTION.md) - FastMCP solution details
+- [TypeScript Solution](implementation/TYPESCRIPT_SOLUTION.md) - TypeScript solution details
 
-### Installation
+### Deployment / 部署
+- [Guide](deployment/GUIDE.md) - Comprehensive deployment guide
+- [Docker](deployment/DOCKER.md) - Container deployment
+- [Kubernetes](deployment/KUBERNETES.md) - K8s deployment
 
-```bash
-# Install dependencies
-cd docs
-pip install -r requirements.txt
-```
+### Development / 开发
+- [Testing](development/TESTING.md) - Testing framework
+- [Contributing](development/CONTRIBUTING.md) - Development workflow
+- [Code Standards](development/CODE_STANDARDS.md) - Coding standards
 
-### Building Documentation
+### Operations / 运维
+- [Monitoring](operations/MONITORING.md) - Monitoring and observability
+- [Troubleshooting](operations/TROUBLESHOOTING.md) - Common issues and solutions
+- [Performance](operations/PERFORMANCE.md) - Performance optimization
 
-```bash
-# Build documentation
-./build.sh build
+### Reference / 参考
+- [API](reference/API.md) - API documentation
+- [Configuration](reference/CONFIG_REFERENCE.md) - Configuration reference
+- [Environment Variables](reference/ENV_VARIABLES.md) - Environment variables
 
-# Or run all steps
-./build.sh all
-```
+## Project Overview / 项目概述
 
-### Serving Locally
+This project provides four distinct solutions for OpenProject MCP integration:
 
-```bash
-# Serve documentation locally
-./build.sh serve
-```
+本项目为 OpenProject MCP 集成提供四种不同的解决方案：
 
-Then visit `http://localhost:8000` in your browser.
+1. **HTTP Solution** - Synchronous implementation with minimal dependencies
+2. **FastAPI Solution** - Asynchronous implementation with performance optimizations
+3. **FastMCP Solution** - Protocol-optimized implementation with advanced features
+4. **TypeScript Solution** - Node.js implementation with type safety
 
-## 🛠️ Development Workflow
+Each solution provides the same core functionality while optimizing for different deployment scenarios and team preferences.
 
-### 1. Install Dependencies
+每个解决方案都提供相同的核心功能，同时针对不同的部署场景和团队偏好进行优化。
 
-```bash
-./build.sh install
-```
+## Getting Help / 获取帮助
 
-### 2. Generate Documentation
+- **Documentation Issues**: Report documentation problems or suggestions
+- **Architecture Questions**: Review architecture documentation
+- **Implementation Details**: Check solution-specific documentation
+- **Deployment Support**: Refer to deployment guides
 
-```bash
-./build.sh generate
-```
+## Contributing / 贡献
 
-This runs the documentation generation scripts to create:
-- API reference documentation
-- Configuration documentation
-- Environment variables reference
+We welcome contributions to improve the documentation. Please refer to the [Contributing Guide](development/CONTRIBUTING.md) for details.
 
-### 3. Build and Serve
-
-```bash
-# Build documentation
-./build.sh build
-
-# Serve locally
-./build.sh serve
-```
-
-### 4. Validate
-
-```bash
-./build.sh validate
-```
-
-### 5. Deploy
-
-```bash
-./build.sh deploy
-```
-
-## 📝 Writing Documentation
-
-### Markdown Guidelines
-
-- Use GitHub Flavored Markdown
-- Follow the existing style and structure
-- Include code examples with syntax highlighting
-- Use proper headings hierarchy
-- Add appropriate tags and metadata
-
-### Code Examples
-
-```markdown
-```python
-# Python example
-def example_function():
-    return "Hello, World!"
-```
-
-```javascript
-// JavaScript example
-function exampleFunction() {
-    return "Hello, World!";
-}
-```
-```
-
-### Images and Diagrams
-
-- Store images in `assets/` directory
-- Use Mermaid diagrams for flowcharts and architecture diagrams
-- Include alt text for accessibility
-
-### Links
-
-- Use relative links for internal documentation
-- Use absolute links for external resources
-- Test all links before committing
-
-## 🎨 Customization
-
-### Styling
-
-- Custom CSS is in `stylesheets/extra.css`
-- Theme configuration is in `mkdocs.yml`
-- Follow Material for MkDocs theme guidelines
-
-### JavaScript
-
-- Custom JavaScript is in `javascripts/extra.js`
-- Includes search, copy functionality, and other enhancements
-- Minimize DOM manipulation for performance
-
-### Plugins
-
-The documentation uses several MkDocs plugins:
-
-- `mkdocs-material` - Material theme
-- `mkdocs-mermaid2` - Diagram support
-- `mkdocs-minify-plugin` - Minification
-- `mkdocs-git-revision-date-localized` - Version tracking
-- `mkdocs-section-index` - Section indexes
-- `mkdocs-literate-nav` - Navigation generation
-- `mkdocs-gen-files` - File generation
-
-## 🔧 Configuration
-
-### MkDocs Configuration
-
-Main configuration is in `mkdocs.yml`:
-
-- Site information and navigation
-- Theme configuration
-- Plugin settings
-- Markdown extensions
-- Custom CSS/JS
-
-### Environment Variables
-
-- `DOCS_DIR`: Documentation directory (default: docs)
-- `SKIP_DEPS`: Skip dependency installation
-- `SKIP_GENERATE`: Skip documentation generation
-- `SKIP_VALIDATE`: Skip validation
-- `DEPLOY_BRANCH`: Deployment branch
-- `DEPLOY_REMOTE`: Deployment remote
-
-## 📊 Metrics and Analytics
-
-The documentation includes:
-
-- Search functionality
-- Version control integration
-- Google Analytics support
-- Performance monitoring
-- Error tracking
-
-## 🚀 Deployment
-
-### GitHub Pages
-
-Documentation is automatically deployed to GitHub Pages:
-
-1. Build documentation
-2. Deploy to `gh-pages` branch
-3. Available at `https://your-username.github.io/mcp-projectmanage-openproject/`
-
-### Custom Domains
-
-To use a custom domain:
-
-1. Configure DNS settings
-2. Update `site_url` in `mkdocs.yml`
-3. Deploy with custom domain settings
-
-## 🤝 Contributing
-
-### Adding New Documentation
-
-1. Create new files in appropriate directory
-2. Update navigation in `mkdocs.yml`
-3. Add to table of contents if needed
-4. Test build and links
-
-### Updating Existing Documentation
-
-1. Edit the appropriate markdown file
-2. Test build and links
-3. Update screenshots if needed
-4. Consider version compatibility
-
-### Code Examples
-
-1. Test all code examples
-2. Include proper syntax highlighting
-3. Add explanatory comments
-4. Consider different languages
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Build Failures**
-```bash
-# Clean and rebuild
-./build.sh clean
-./build.sh all
-```
-
-**Missing Dependencies**
-```bash
-# Reinstall dependencies
-pip install -r requirements.txt
-```
-
-**Plugin Errors**
-```bash
-# Check MkDocs version
-mkdocs --version
-
-# Update plugins
-pip install --upgrade mkdocs-material
-```
-
-### Getting Help
-
-- Check MkDocs documentation
-- Review error messages
-- Test individual components
-- Check plugin compatibility
-
-## 📈 Maintenance
-
-### Regular Tasks
-
-- Update dependencies regularly
-- Test build process
-- Check for broken links
-- Update version information
-- Review analytics and feedback
-
-### Version Management
-
-- Use semantic versioning
-- Create release branches
-- Update version in configuration
-- Document breaking changes
-
-## 📄 License
-
-Documentation is licensed under the same license as the main project (MIT License).
+我们欢迎改进文档的贡献。详情请参阅[贡献指南](development/CONTRIBUTING.md)。
 
 ---
 
-For more information about MkDocs, visit [mkdocs.org](https://www.mkdocs.org/).
+**Last Updated**: 2025-09-04  
+**Documentation Version**: 1.0
