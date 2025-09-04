@@ -1,0 +1,178 @@
+# Unified Alert Rules for All MCP Solutions
+
+groups:
+  - name: mcp-solutions
+    rules:
+      # Alert for high error rates
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors per second for job {{ $labels.job }}"
+
+      # Alert for high latency
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High request latency detected"
+          description: "95th percentile latency is {{ $value }} seconds for job {{ $labels.job }}"
+
+      # Alert for service down
+      - alert: ServiceDown
+        expr: up{job=~"http-solution|fastapi-solution|fastmcp-solution|typescript-solution"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service is down"
+          description: "Service {{ $labels.job }} is down"
+
+      # Alert for high memory usage
+      - alert: HighMemoryUsage
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value }}% for container {{ $labels.container }}"
+
+      # Alert for high CPU usage
+      - alert: HighCPUUsage
+        expr: (rate(container_cpu_usage_seconds_total[5m]) / container_spec_cpu_quota) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value }}% for container {{ $labels.container }}"
+
+      # Alert for low available disk space
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 < 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space detected"
+          description: "Available disk space is {{ $value }}% on mount point {{ $labels.mountpoint }}"
+
+      # Alert for OpenProject connection issues
+      - alert: OpenProjectConnectionFailed
+        expr: openproject_connection_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OpenProject connection failed"
+          description: "Unable to connect to OpenProject API"
+
+      # Alert for Redis connection issues
+      - alert: RedisConnectionFailed
+        expr: redis_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis connection failed"
+          description: "Unable to connect to Redis"
+
+      # Alert for database connection issues
+      - alert: DatabaseConnectionFailed
+        expr: pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection failed"
+          description: "Unable to connect to PostgreSQL database"
+
+      # Alert for high active sessions (FastMCP specific)
+      - alert: HighActiveSessions
+        expr: fastmcp_active_sessions > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of active MCP sessions"
+          description: "Active MCP sessions: {{ $value }}"
+
+      # Alert for WebSocket connection issues (FastAPI specific)
+      - alert: WebSocketConnectionFailed
+        expr: websocket_connections_total == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WebSocket connections failed"
+          description: "No active WebSocket connections detected"
+
+      # Alert for Node.js heap memory usage (TypeScript specific)
+      - alert: NodeJSHighHeapUsage
+        expr: (nodejs_heap_size_total_bytes - nodejs_heap_size_used_bytes) / nodejs_heap_size_total_bytes * 100 < 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node.js heap memory running low"
+          description: "Node.js heap memory usage is {{ $value }}%"
+
+  - name: infrastructure
+    rules:
+      # Alert for Prometheus itself being down
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus is down"
+          description: "Prometheus server is not responding"
+
+      # Alert for AlertManager being down
+      - alert: AlertManagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AlertManager is down"
+          description: "AlertManager server is not responding"
+
+      # Alert for Grafana being down
+      - alert: GrafanaDown
+        expr: up{job="grafana"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Grafana is down"
+          description: "Grafana server is not responding"
+
+  - name: business
+    rules:
+      # Alert for low report generation
+      - alert: LowReportGeneration
+        expr: rate(mcp_reports_generated_total[1h]) < 1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low report generation rate"
+          description: "Report generation rate is {{ $value }} reports per hour"
+
+      # Alert for failed work package operations
+      - alert: FailedWorkPackageOperations
+        expr: rate(mcp_workpackage_operations_failed_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High work package operation failure rate"
+          description: "Work package operations failing at {{ $value }} per minute"

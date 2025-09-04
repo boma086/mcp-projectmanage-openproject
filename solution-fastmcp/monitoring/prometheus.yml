@@ -3,7 +3,8 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    monitor: 'fastmcp-monitor'
+    monitor: 'mcp-openproject-monitor'
+    environment: '${ENVIRONMENT:-development}'
 
 # Rule files for alerting
 rule_files:
@@ -21,24 +22,26 @@ scrape_configs:
   # FastMCP Solution metrics
   - job_name: 'fastmcp-solution'
     static_configs:
-      - targets: ['fastmcp:8030']
+      - targets: ['fastmcp-solution:8030']
     metrics_path: '/metrics'
     scrape_interval: 15s
     scrape_timeout: 10s
     scheme: http
     sample_limit: 10000
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'fastmcp-solution'
     metric_relabel_configs:
       - source_labels: [__name__]
         regex: 'fastmcp_.*'
         action: keep
 
-  # Redis metrics
-  - job_name: 'redis'
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
     static_configs:
-      - targets: ['redis:6379']
-    metrics_path: '/metrics'
+      - targets: ['localhost:9090']
     scrape_interval: 30s
-    scrape_timeout: 10s
 
   # Node exporter metrics (if available)
   - job_name: 'node-exporter'
@@ -54,8 +57,15 @@ scrape_configs:
       - targets: ['openproject:8080']
     metrics_path: '/metrics'
     scrape_interval: 30s
-    scrape_timeout: 10s
+    scrape_timeout: 15s
     scheme: http
+
+  # Redis metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+    scrape_timeout: 10s
 
   # Container metrics (if cAdvisor is available)
   - job_name: 'cadvisor'

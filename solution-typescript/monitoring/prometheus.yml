@@ -2,6 +2,9 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  external_labels:
+    monitor: 'mcp-openproject-monitor'
+    environment: '${ENVIRONMENT:-development}'
 
 # Rule files for alerting
 rule_files:
@@ -16,21 +19,14 @@ alerting:
 
 # Scrape configurations
 scrape_configs:
-  # Prometheus self-monitoring
-  - job_name: 'prometheus'
-    static_configs:
-      - targets: ['localhost:9090']
-
   # TypeScript Solution
   - job_name: 'typescript-solution'
     static_configs:
-      - targets: ['mcp-typescript:8040']
+      - targets: ['typescript-solution:8040']
     metrics_path: '/metrics'
     scrape_interval: 15s
     scrape_timeout: 10s
     scheme: http
-    
-    # Relabel configurations
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
@@ -42,10 +38,18 @@ scrape_configs:
         regex: 'nodejs_.*'
         action: keep
 
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+
   # Node Exporter for system metrics
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+    scrape_timeout: 10s
 
   # OpenProject monitoring
   - job_name: 'openproject'
@@ -54,15 +58,18 @@ scrape_configs:
     metrics_path: '/metrics'
     scrape_interval: 30s
     scrape_timeout: 15s
+    scheme: http
 
   # Redis monitoring
   - job_name: 'redis'
     static_configs:
       - targets: ['redis:6379']
     scrape_interval: 30s
+    scrape_timeout: 10s
 
   # PostgreSQL monitoring
   - job_name: 'postgres'
     static_configs:
       - targets: ['postgres-exporter:9187']
     scrape_interval: 30s
+    scrape_timeout: 10s

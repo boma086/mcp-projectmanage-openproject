@@ -3,21 +3,34 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    monitor: 'fastapi-mcp-monitor'
+    monitor: 'mcp-openproject-monitor'
     environment: '${ENVIRONMENT:-development}'
 
-# Scrape configuration for FastAPI MCP server
+# Rule files for alerting
+rule_files:
+  - "alert_rules.yml"
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+# Scrape configuration
 scrape_configs:
-  # FastAPI application metrics
-  - job_name: 'fastapi-mcp'
+  # FastAPI Solution
+  - job_name: 'fastapi-solution'
     static_configs:
-      - targets: ['fastapi-mcp:8020']
+      - targets: ['fastapi-solution:8020']
     metrics_path: '/metrics'
     scrape_interval: 15s
     scrape_timeout: 10s
     scheme: http
-    params:
-      format: ['prometheus']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'fastapi-solution'
 
   # Prometheus self-monitoring
   - job_name: 'prometheus'
@@ -25,26 +38,25 @@ scrape_configs:
       - targets: ['localhost:9090']
     scrape_interval: 30s
 
-  # Redis metrics (if redis_exporter is available)
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # OpenProject monitoring
+  - job_name: 'openproject'
+    static_configs:
+      - targets: ['openproject:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 15s
+    scheme: http
+
+  # Redis monitoring
   - job_name: 'redis'
     static_configs:
       - targets: ['redis:6379']
     scrape_interval: 30s
-    metrics_path: '/metrics'
-    
-  # Node exporter for system metrics (optional)
-  - job_name: 'node'
-    static_configs:
-      - targets: ['node-exporter:9100']
-    scrape_interval: 30s
-
-# Alerting rules for production monitoring
-rule_files:
-  - "alert_rules.yml"
-
-# Alert manager configuration (for production)
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets:
-          - alertmanager:9093
+    scrape_timeout: 10s
