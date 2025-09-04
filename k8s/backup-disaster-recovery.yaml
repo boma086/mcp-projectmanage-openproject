@@ -1,0 +1,383 @@
+# Backup and Disaster Recovery Configuration
+
+# Persistent Volume for Backups
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+  namespace: mcp-openproject
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: gp2
+  volumeMode: Filesystem
+
+---
+# Backup CronJob for PostgreSQL
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: mcp-openproject
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: postgres-backup
+            image: postgres:15-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting PostgreSQL backup..."
+              
+              # Create backup filename with timestamp
+              BACKUP_FILE="/backup/postgres_backup_$(date +%Y%m%d_%H%M%S).sql"
+              
+              # Perform backup
+              pg_dump -h postgres-service -U mcpuser -d mcpdb > $BACKUP_FILE
+              
+              # Compress backup
+              gzip $BACKUP_FILE
+              
+              # Remove backups older than 30 days
+              find /backup -name "postgres_backup_*.sql.gz" -mtime +30 -delete
+              
+              echo "PostgreSQL backup completed: ${BACKUP_FILE}.gz"
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+            volumeMounts:
+            - name: backup-volume
+              mountPath: /backup
+          restartPolicy: OnFailure
+          volumes:
+          - name: backup-volume
+            persistentVolumeClaim:
+              claimName: backup-pvc
+
+---
+# Backup CronJob for Redis
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-backup
+  namespace: mcp-openproject
+spec:
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: redis-backup
+            image: redis:7-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting Redis backup..."
+              
+              # Create backup filename with timestamp
+              BACKUP_FILE="/backup/redis_backup_$(date +%Y%m%d_%H%M%S).rdb"
+              
+              # Perform backup
+              redis-cli -h redis-service --rdb $BACKUP_FILE
+              
+              # Compress backup
+              gzip $BACKUP_FILE
+              
+              # Remove backups older than 30 days
+              find /backup -name "redis_backup_*.rdb.gz" -mtime +30 -delete
+              
+              echo "Redis backup completed: ${BACKUP_FILE}.gz"
+            volumeMounts:
+            - name: backup-volume
+              mountPath: /backup
+          restartPolicy: OnFailure
+          volumes:
+          - name: backup-volume
+            persistentVolumeClaim:
+              claimName: backup-pvc
+
+---
+# S3 Backup Sync Job
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: s3-backup-sync
+  namespace: mcp-openproject
+spec:
+  schedule: "0 4 * * *"  # Daily at 4 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: s3-backup-sync
+            image: amazon/aws-cli:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting S3 backup sync..."
+              
+              # Sync local backups to S3
+              aws s3 sync /backup/ s3://mcp-openproject-backups/$(date +%Y-%m-%d)/ --delete
+              
+              # Set lifecycle policies for old backups
+              aws s3api put-bucket-lifecycle-configuration \
+                --bucket mcp-openproject-backups \
+                --lifecycle-configuration '{
+                  "Rules": [
+                    {
+                      "ID": "DeleteOldBackups",
+                      "Status": "Enabled",
+                      "Filter": {},
+                      "Expiration": { "Days": 90 }
+                    }
+                  ]
+                }'
+              
+              echo "S3 backup sync completed"
+            env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
+            - name: AWS_DEFAULT_REGION
+              value: "us-west-2"
+            volumeMounts:
+            - name: backup-volume
+              mountPath: /backup
+          restartPolicy: OnFailure
+          volumes:
+          - name: backup-volume
+            persistentVolumeClaim:
+              claimName: backup-pvc
+
+---
+# Disaster Recovery Pod
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: disaster-recovery
+  namespace: mcp-openproject
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: disaster-recovery
+  template:
+    metadata:
+      labels:
+        app: disaster-recovery
+    spec:
+      containers:
+      - name: disaster-recovery
+        image: busybox:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Disaster recovery pod started"
+          while true; do
+            sleep 3600
+            echo "Disaster recovery pod is running..."
+          done
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: backup-volume
+          mountPath: /backup
+        - name: recovery-scripts
+          mountPath: /recovery
+      volumes:
+      - name: backup-volume
+        persistentVolumeClaim:
+          claimName: backup-pvc
+      - name: recovery-scripts
+        configMap:
+          name: recovery-scripts
+
+---
+# Recovery Scripts ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: recovery-scripts
+  namespace: mcp-openproject
+data:
+  restore-postgres.sh: |
+    #!/bin/bash
+    set -e
+    
+    BACKUP_FILE=$1
+    if [ -z "$BACKUP_FILE" ]; then
+      echo "Usage: $0 <backup-file>"
+      exit 1
+    fi
+    
+    echo "Restoring PostgreSQL from $BACKUP_FILE..."
+    
+    # Decompress backup if needed
+    if [[ "$BACKUP_FILE" == *.gz ]]; then
+      gzip -d "$BACKUP_FILE"
+      BACKUP_FILE="${BACKUP_FILE%.gz}"
+    fi
+    
+    # Restore database
+    psql -h postgres-service -U mcpuser -d mcpdb < "$BACKUP_FILE"
+    
+    echo "PostgreSQL restore completed"
+  
+  restore-redis.sh: |
+    #!/bin/bash
+    set -e
+    
+    BACKUP_FILE=$1
+    if [ -z "$BACKUP_FILE" ]; then
+      echo "Usage: $0 <backup-file>"
+      exit 1
+    fi
+    
+    echo "Restoring Redis from $BACKUP_FILE..."
+    
+    # Decompress backup if needed
+    if [[ "$BACKUP_FILE" == *.gz ]]; then
+      gzip -d "$BACKUP_FILE"
+      BACKUP_FILE="${BACKUP_FILE%.gz}"
+    fi
+    
+    # Stop Redis
+    redis-cli -h redis-service SHUTDOWN SAVE
+    
+    # Copy backup file
+    cp "$BACKUP_FILE" /data/dump.rdb
+    
+    # Start Redis
+    redis-server /etc/redis/redis.conf
+    
+    echo "Redis restore completed"
+  
+  disaster-recovery-plan.md: |
+    # Disaster Recovery Plan
+    
+    ## 1. Backup Strategy
+    - **Daily Backups**: Automated daily backups of PostgreSQL and Redis
+    - **S3 Storage**: Backups stored in S3 with 90-day retention
+    - **Local Storage**: Recent backups kept locally for quick recovery
+    
+    ## 2. Recovery Procedures
+    
+    ### Database Recovery
+    1. Identify the latest backup file
+    2. Run the restore script:
+       ```bash
+       kubectl exec -it disaster-recovery-pod -- /recovery/restore-postgres.sh /backup/postgres_backup_20231201_020000.sql
+       ```
+    
+    ### Redis Recovery
+    1. Identify the latest Redis backup
+    2. Run the restore script:
+       ```bash
+       kubectl exec -it disaster-recovery-pod -- /recovery/restore-redis.sh /backup/redis_backup_20231201_030000.rdb
+       ```
+    
+    ### Full Cluster Recovery
+    1. Restore from S3 backup
+    2. Apply Kubernetes manifests
+    3. Verify all services are running
+    
+    ## 3. Testing
+    - **Monthly**: Test backup and restore procedures
+    - **Quarterly**: Full disaster recovery drill
+    - **Annual**: Review and update recovery plan
+    
+    ## 4. Contact Information
+    - **Primary**: devops-team@example.com
+    - **Secondary**: sre-team@example.com
+    - **Emergency**: emergency-contact@example.com
+
+---
+# Health Check for Backup System
+apiVersion: v1
+kind: Service
+metadata:
+  name: backup-monitoring-service
+  namespace: mcp-openproject
+spec:
+  selector:
+    app: disaster-recovery
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: metrics
+  type: ClusterIP
+
+---
+# Backup Monitoring ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-monitoring
+  namespace: mcp-openproject
+data:
+  backup-check.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Checking backup system health..."
+    
+    # Check if backup directory exists
+    if [ ! -d "/backup" ]; then
+      echo "ERROR: Backup directory not found"
+      exit 1
+    fi
+    
+    # Check recent backups
+    recent_backups=$(find /backup -name "*.gz" -mtime -1 | wc -l)
+    if [ "$recent_backups" -eq 0 ]; then
+      echo "ERROR: No recent backups found"
+      exit 1
+    fi
+    
+    # Check S3 connectivity
+    if ! aws s3 ls s3://mcp-openproject-backups/ &>/dev/null; then
+      echo "ERROR: Cannot connect to S3"
+      exit 1
+    fi
+    
+    # Check backup sizes
+    for backup in /backup/*.gz; do
+      size=$(du -h "$backup" | cut -f1)
+      echo "Backup $backup: $size"
+    done
+    
+    echo "Backup system health check completed"
+    echo "Recent backups: $recent_backups"
+    echo "Total backup size: $(du -sh /backup | cut -f1)"

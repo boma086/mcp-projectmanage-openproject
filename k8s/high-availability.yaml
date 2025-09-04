@@ -1,0 +1,558 @@
+# High Availability Configuration for Production Deployment
+
+# Multi-AZ PostgreSQL Cluster
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-ha
+  namespace: mcp-openproject
+spec:
+  serviceName: postgres-ha-service
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgres-ha
+  template:
+    metadata:
+      labels:
+        app: postgres-ha
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_DB
+          value: "mcpdb"
+        - name: POSTGRES_USER
+          value: "mcpuser"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: password
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - mcpuser
+            - -d
+            - mcpdb
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - mcpuser
+            - -d
+            - mcpdb
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: postgres-config
+        configMap:
+          name: postgres-ha-config
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 20Gi
+      storageClassName: gp2
+      selector:
+        matchLabels:
+          type: "postgres-ha"
+
+---
+# PostgreSQL HA Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-ha-config
+  namespace: mcp-openproject
+data:
+  postgresql.conf: |
+    # Connection settings
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 200
+    shared_buffers = 256MB
+    
+    # Replication settings
+    wal_level = replica
+    max_wal_senders = 3
+    max_replication_slots = 3
+    hot_standby = on
+    hot_standby_feedback = on
+    
+    # HA settings
+    synchronous_commit = on
+    synchronous_standby_names = 'ANY 2 (postgres-ha-1, postgres-ha-2, postgres-ha-3)'
+    
+    # Performance settings
+    effective_cache_size = 1GB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = on
+    log_directory = '/var/log/postgresql'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_statement = 'all'
+    log_duration = on
+    log_connections = on
+    log_disconnections = on
+    
+    # Security
+    ssl = on
+    ssl_cert_file = '/etc/ssl/certs/server.crt'
+    ssl_key_file = '/etc/ssl/private/server.key'
+
+---
+# PostgreSQL HA Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-ha-service
+  namespace: mcp-openproject
+  labels:
+    app: postgres-ha
+spec:
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  clusterIP: None
+  selector:
+    app: postgres-ha
+
+---
+# Redis Cluster Configuration
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: mcp-openproject
+spec:
+  serviceName: redis-cluster-service
+  replicas: 6
+  selector:
+    matchLabels:
+      app: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
+        ports:
+        - containerPort: 6379
+          name: redis
+        - containerPort: 16379
+          name: redis-cluster
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        - name: redis-config
+          mountPath: /etc/redis
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 1
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-cluster-config
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: gp2
+
+---
+# Redis Cluster Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cluster-config
+  namespace: mcp-openproject
+data:
+  redis.conf: |
+    # Cluster mode
+    cluster-enabled yes
+    cluster-config-file /data/nodes.conf
+    cluster-node-timeout 5000
+    
+    # Port settings
+    port 6379
+    cluster-announce-port 6379
+    cluster-announce-bus-port 16379
+    
+    # Persistence
+    appendonly yes
+    appendfilename "appendonly.aof"
+    
+    # Memory management
+    maxmemory 256mb
+    maxmemory-policy allkeys-lru
+    
+    # Network
+    bind 0.0.0.0
+    protected-mode no
+    
+    # Security
+    requirepass secure-redis-password
+    masterauth secure-redis-password
+    
+    # Logging
+    loglevel notice
+    logfile /var/log/redis/redis-server.log
+
+---
+# Redis Cluster Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-service
+  namespace: mcp-openproject
+  labels:
+    app: redis-cluster
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: redis
+  - port: 16379
+    targetPort: 16379
+    protocol: TCP
+    name: redis-cluster
+  clusterIP: None
+  selector:
+    app: redis-cluster
+
+---
+# Multi-Zone Application Deployments
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-solution-ha
+  namespace: mcp-openproject
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: http-solution-ha
+  template:
+    metadata:
+      labels:
+        app: http-solution-ha
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - http-solution-ha
+              topologyKey: kubernetes.io/hostname
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - http-solution-ha
+              topologyKey: topology.kubernetes.io/zone
+      containers:
+      - name: http-solution
+        image: mcp-openproject/http-solution:latest
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://mcpuser:password@postgres-ha-service:5432/mcpdb"
+        - name: REDIS_URL
+          value: "redis://:secure-redis-password@redis-cluster-service:6379"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 1
+
+---
+# Multi-Zone Load Balancer
+apiVersion: v1
+kind: Service
+metadata:
+  name: http-solution-ha-service
+  namespace: mcp-openproject
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "traffic-port"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "3"
+spec:
+  type: LoadBalancer
+  selector:
+    app: http-solution-ha
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+
+---
+# Regional Health Check Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: regional-health-check
+  namespace: mcp-openproject
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: nginx
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+
+---
+# Multi-Region Database Replication
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multi-region-config
+  namespace: mcp-openproject
+data:
+  postgresql.conf: |
+    # Enable logical replication
+    wal_level = logical
+    max_wal_senders = 10
+    max_replication_slots = 10
+    
+    # Archive settings for cross-region replication
+    archive_mode = on
+    archive_command = 'aws s3 cp %p s3://mcp-openproject-wal-archive/%f'
+    archive_timeout = 60
+    
+    # Hot standby for read replicas
+    hot_standby = on
+    max_standby_streaming_delay = 30s
+    max_standby_archive_delay = 60s
+    
+    # Connection pooling
+    max_connections = 400
+    shared_buffers = 1GB
+    
+    # Performance tuning
+    effective_cache_size = 3GB
+    maintenance_work_mem = 128MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+
+---
+# Global Traffic Management
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: global-gateway
+  namespace: mcp-openproject
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "mcp-openproject.example.com"
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: tls-secret
+    hosts:
+    - "mcp-openproject.example.com"
+
+---
+# Global Virtual Service
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: global-service
+  namespace: mcp-openproject
+spec:
+  hosts:
+  - "mcp-openproject.example.com"
+  gateways:
+  - global-gateway
+  http:
+  - match:
+    - headers:
+        region:
+          exact: "us-west-2"
+    route:
+    - destination:
+        host: http-solution-ha-service
+        port:
+          number: 80
+      weight: 100
+  - match:
+    - headers:
+        region:
+          exact: "us-east-1"
+    route:
+    - destination:
+        host: http-solution-ha-service-backup
+        port:
+          number: 80
+      weight: 100
+  - route:
+    - destination:
+        host: http-solution-ha-service
+        port:
+          number: 80
+      weight: 80
+    - destination:
+        host: http-solution-ha-service-backup
+        port:
+          number: 80
+      weight: 20
+
+---
+# Circuit Breaker Configuration
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: circuit-breaker
+  namespace: mcp-openproject
+spec:
+  host: "*.mcp-openproject.svc.cluster.local"
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        tcpKeepalive:
+          time: 7200s
+          interval: 75s
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        idleTimeout: 90s
+        h2UpgradePolicy: UPGRADE
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+      splitExternalLocalOriginErrors: true

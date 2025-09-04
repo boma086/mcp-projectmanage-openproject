@@ -1,0 +1,288 @@
+# Production Ingress and Load Balancing Configuration
+
+# SSL/TLS Certificate Configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tls-secret
+  namespace: mcp-openproject
+type: kubernetes.io/tls
+data:
+  # NOTE: Replace with actual base64 encoded certificate and key
+  # tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t...
+  # tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t...
+
+---
+# Production Ingress Configuration
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: production-ingress
+  namespace: mcp-openproject
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+    nginx.ingress.kubernetes.io/ssl-prefer-server-ciphers: "true"
+    nginx.ingress.kubernetes.io/ssl-session-cache: "shared:SSL:10m"
+    nginx.ingress.kubernetes.io/ssl-session-timeout: "10m"
+    nginx.ingress.kubernetes.io/ssl-session-tickets: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+    nginx.ingress.kubernetes.io/proxy-buffer-number: "4"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' wss: https:; font-src 'self' data:; object-src 'none'; frame-ancestors 'none';";
+spec:
+  tls:
+  - hosts:
+    - mcp-openproject.example.com
+    - api.mcp-openproject.example.com
+    - monitoring.mcp-openproject.example.com
+    secretName: tls-secret
+  rules:
+  - host: mcp-openproject.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-service
+            port:
+              number: 80
+  - host: api.mcp-openproject.example.com
+    http:
+      paths:
+      - path: /http/
+        pathType: Prefix
+        backend:
+          service:
+            name: http-solution-service
+            port:
+              number: 80
+      - path: /fastapi/
+        pathType: Prefix
+        backend:
+          service:
+            name: fastapi-solution-service
+            port:
+              number: 80
+      - path: /fastmcp/
+        pathType: Prefix
+        backend:
+          service:
+            name: fastmcp-solution-service
+            port:
+              number: 80
+      - path: /typescript/
+        pathType: Prefix
+        backend:
+          service:
+            name: typescript-solution-service
+            port:
+              number: 80
+  - host: monitoring.mcp-openproject.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana-service
+            port:
+              number: 3000
+
+---
+# Internal Load Balancer for Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-loadbalancer
+  namespace: mcp-openproject
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "TCP"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "traffic-port"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "10"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "2"
+spec:
+  type: LoadBalancer
+  selector:
+    app: nginx
+  ports:
+  - port: 443
+    targetPort: 80
+    protocol: TCP
+    name: https
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+
+---
+# External Load Balancer for Public Access
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-loadbalancer
+  namespace: mcp-openproject
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: alb
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-security-groups: "sg-123456789"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "traffic-port"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "3"
+spec:
+  type: LoadBalancer
+  selector:
+    app: nginx
+  ports:
+  - port: 443
+    targetPort: 80
+    protocol: TCP
+    name: https
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+
+---
+# Network Policies for Production Security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-network-policy
+  namespace: mcp-openproject
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          app: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 9090
+
+---
+# Rate Limiting Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rate-limit-config
+  namespace: mcp-openproject
+data:
+  nginx.conf: |
+    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+    limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
+    limit_req_zone $binary_remote_addr zone=global:10m rate=100r/s;
+    
+    limit_conn_zone $binary_remote_addr zone=conn_limit_per_ip:10m;
+    
+    server {
+        listen 80;
+        server_name _;
+        
+        # Global rate limiting
+        limit_req zone=global burst=20 nodelay;
+        limit_conn conn_limit_per_ip 50;
+        
+        # Health check bypass
+        location /health {
+            access_log off;
+            return 200 'healthy\n';
+            add_header Content-Type text/plain;
+        }
+        
+        # API endpoints with stricter limits
+        location /api/ {
+            limit_req zone=api burst=5 nodelay;
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        
+        # Login endpoints with very strict limits
+        location /auth/ {
+            limit_req zone=login burst=2 nodelay;
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+
+---
+# WAF Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: waf-config
+  namespace: mcp-openproject
+data:
+  modsecurity.conf: |
+    SecRuleEngine On
+    SecRequestBodyAccess On
+    SecResponseBodyAccess On
+    SecResponseBodyMimeType text/plain text/html text/xml application/json
+    SecResponseBodyLimit 1048576
+    SecAuditEngine RelevantOnly
+    SecAuditLog /var/log/modsec_audit.log
+    SecAuditLogParts ABIJDEFHZ
+    SecDefaultAction "phase:2,deny,log,status:403"
+    
+    # OWASP Core Rule Set
+    Include /etc/modsecurity.d/owasp-crs/crs-setup.conf
+    Include /etc/modsecurity.d/owasp-crs/rules/*.conf
+    
+    # Custom rules for MCP OpenProject
+    SecRule REQUEST_URI "@contains /api/" "id:1001,phase:1,log,deny,status:403,msg:'API access blocked'"
+    SecRule REQUEST_METHOD "@streq POST" "id:1002,phase:1,log,deny,status:403,msg:'POST method blocked'"
