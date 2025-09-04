@@ -1,0 +1,146 @@
+# HTTP Solution Kubernetes Configuration
+
+# ConfigMap for HTTP Solution
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: http-solution-config
+  namespace: mcp-openproject
+data:
+  LOG_LEVEL: "INFO"
+  ENVIRONMENT: "production"
+  REDIS_URL: "redis://redis-service:6379"
+  DATABASE_URL: "postgresql://mcpuser:$(POSTGRES_PASSWORD)@postgres-service:5432/mcpdb"
+  PYTHONPATH: "/app/src"
+  PYTHONUNBUFFERED: "1"
+  HOST: "0.0.0.0"
+  PORT: "8010"
+---
+# Deployment for HTTP Solution
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-solution
+  namespace: mcp-openproject
+  labels:
+    app: http-solution
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: http-solution
+  template:
+    metadata:
+      labels:
+        app: http-solution
+        version: v1
+    spec:
+      containers:
+      - name: http-solution
+        image: mcp-http:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8010
+          name: http
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: http-solution-config
+        - secretRef:
+            name: openproject-secrets
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8010
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8010
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+        - name: shared-web
+          mountPath: /app/shared-web
+          readOnly: true
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: shared-web
+        configMap:
+          name: shared-web-assets
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 60
+---
+# Service for HTTP Solution
+apiVersion: v1
+kind: Service
+metadata:
+  name: http-solution-service
+  namespace: mcp-openproject
+  labels:
+    app: http-solution
+spec:
+  selector:
+    app: http-solution
+  ports:
+  - port: 80
+    targetPort: 8010
+    protocol: TCP
+    name: http
+  type: ClusterIP
+---
+# Horizontal Pod Autoscaler for HTTP Solution
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: http-solution-hpa
+  namespace: mcp-openproject
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: http-solution
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60

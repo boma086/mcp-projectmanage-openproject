@@ -1,0 +1,175 @@
+# FastAPI Solution Kubernetes Configuration
+
+# ConfigMap for FastAPI Solution
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fastapi-solution-config
+  namespace: mcp-openproject
+data:
+  LOG_LEVEL: "INFO"
+  ENVIRONMENT: "production"
+  REDIS_URL: "redis://redis-service:6379"
+  DATABASE_URL: "postgresql://mcpuser:$(POSTGRES_PASSWORD)@postgres-service:5432/mcpdb"
+  WORKERS: "4"
+  WORKER_CONNECTIONS: "1000"
+  MAX_CONCURRENT_REQUESTS: "1000"
+  ASYNC_POOL_SIZE: "20"
+  HTTP_CLIENT_MAX_CONNECTIONS: "100"
+  HTTP_CLIENT_MAX_KEEPALIVE: "50"
+  WEBSOCKET_MAX_CONNECTIONS: "1000"
+  REQUEST_TIMEOUT: "30"
+  CACHE_ENABLED: "true"
+  ENABLE_METRICS: "true"
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONHASHSEED: "random"
+  PYTHONIOENCODING: "utf-8"
+  PIP_NO_CACHE_DIR: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  HOST: "0.0.0.0"
+  PORT: "8020"
+---
+# Deployment for FastAPI Solution
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-solution
+  namespace: mcp-openproject
+  labels:
+    app: fastapi-solution
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: fastapi-solution
+  template:
+    metadata:
+      labels:
+        app: fastapi-solution
+        version: v1
+    spec:
+      containers:
+      - name: fastapi-solution
+        image: mcp-fastapi:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8020
+          name: http
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: fastapi-solution-config
+        - secretRef:
+            name: openproject-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8020
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8020
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+        - name: shared-web
+          mountPath: /app/shared-web
+          readOnly: true
+        - name: tmp
+          mountPath: /app/tmp
+        - name: uploads
+          mountPath: /app/uploads
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: shared-web
+        configMap:
+          name: shared-web-assets
+      - name: tmp
+        emptyDir: {}
+      - name: uploads
+        emptyDir: {}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 60
+---
+# Service for FastAPI Solution
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-solution-service
+  namespace: mcp-openproject
+  labels:
+    app: fastapi-solution
+spec:
+  selector:
+    app: fastapi-solution
+  ports:
+  - port: 80
+    targetPort: 8020
+    protocol: TCP
+    name: http
+  type: ClusterIP
+---
+# Horizontal Pod Autoscaler for FastAPI Solution
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fastapi-solution-hpa
+  namespace: mcp-openproject
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fastapi-solution
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
