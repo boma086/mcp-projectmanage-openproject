@@ -36,23 +36,39 @@ export interface HealthCheckSummary {
 }
 
 export interface AppConfig {
+  app: {
+    name: string;
+    version: string;
+    environment: string;
+    debug: boolean;
+  };
   openproject: {
     url: string;
     apiKey: string;
+    timeout: number;
+    maxRetries: number;
   };
   server: {
     port: number;
     host: string;
     nodeEnv: string;
+    maxConnections: number;
+    requestTimeout: number;
+    maxRequestSize: number;
   };
   monitoring: {
     enabled: boolean;
     metricsPath: string;
     healthCheckEnabled: boolean;
-    healthCheckPath: string;
+    healthCheckInterval: number;
+    deepHealthCheckInterval: number;
     logLevel: string;
     structuredLogging: boolean;
     correlationIds: boolean;
+  };
+  performance: {
+    maxConcurrentRequests: number;
+    cacheTtl: number;
   };
   rateLimit: {
     enabled: boolean;
@@ -62,6 +78,7 @@ export interface AppConfig {
   security: {
     corsEnabled: boolean;
     corsOrigin: string;
+    trustedHosts: string;
     helmetEnabled: boolean;
     compressionEnabled: boolean;
   };
